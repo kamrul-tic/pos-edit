@@ -1255,7 +1255,12 @@
       $("#profitLoss-report-form").submit();
     });
 
-    $("a#report-link").click(function(e) {
+    $("a#category-report-link").click(function(e) {
+      e.preventDefault();
+      $("#category-report-form").submit();
+    });
+
+    $("a#product-report-link").click(function(e) {
       e.preventDefault();
       $("#product-report-form").submit();
     });

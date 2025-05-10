@@ -24,6 +24,7 @@
                                         @if($revesms)<input type="hidden" id="revesmsId" value="{{ $revesms['sms_id'] }}">@endif
                                         @if($bdbulksms)<input type="hidden" id="bdbulksmsId" value="{{ $revesms['sms_id'] }}">@endif
                                         @if($tonkra)<input type="hidden" id="tonkraId" value="{{ $tonkra['sms_id'] }}">@endif
+                                        @if($elitbuzz)<input type="hidden" id="elitbuzzId" value="{{ $elitbuzz['sms_id'] }}">@endif
                                         @if($twilio)<input type="hidden" id="twilioId" value="{{ $twilio['sms_id'] }}">@endif
                                         @if($clickatell)<input type="hidden" id="clickatellId" value="{{ $clickatell['sms_id'] ?? '' }}">@endif
                                         <input type="hidden" name="gateway_hidden" value="">
@@ -33,6 +34,7 @@
                                             @if($revesms)<option value="revesms" data-active="{{ $revesms['active'] }}" {{ $revesms['active'] == true ? 'selected' : '' }} >revesms</option>@endif
                                             @if($bdbulksms)<option value="bdbulksms" data-active="{{ $bdbulksms['active'] }}" {{ $bdbulksms['active'] == true ? 'selected' : '' }} >bdbulksms</option>@endif
                                             @if($tonkra)<option value="tonkra" data-active="{{ $tonkra['active'] }}" {{ $tonkra['active'] == true ? 'selected' : '' }} >Tonkra</option>@endif
+                                            @if($elitbuzz)<option value="elitbuzz" data-active="{{ $elitbuzz['active'] }}" {{ $elitbuzz['active'] == true ? 'selected' : '' }} >Elitbuzz</option>@endif
                                             @if($twilio)<option value="twilio" data-active="{{ $twilio['active'] }}" {{ $twilio['active'] == true ? 'selected' : '' }} >Twilio</option>@endif
                                             @if($clickatell)<option value="clickatell" data-active="{{ $clickatell['active'] }}" {{ $clickatell['active'] == true ? 'selected' : '' }} >Clickatell</option>@endif
                                         </select>
@@ -60,6 +62,14 @@
                                     <div class="form-group tonkra">
                                         <label>Sender ID *</label>
                                         <input type="text" name="sender_id" class="form-control tonkra-option" value="{{ $tonkra['sender_id']  }}" />
+                                    </div>
+                                    <div class="form-group elitbuzz">
+                                        <label>API Key *</label>
+                                        <input type="text" name="api_key" class="form-control elitbuzz-option" value="{{ $elitbuzz['api_key'] }}" />
+                                    </div>
+                                    <div class="form-group elitbuzz">
+                                        <label>Sender ID *</label>
+                                        <input type="text" name="sender_id" class="form-control elitbuzz-option" value="{{ $elitbuzz['sender_id']  }}" />
                                     </div>
                                     <div class="form-group twilio">
                                         <label>ACCOUNT SID *</label>
@@ -109,6 +119,7 @@
             $('select[name="gateway"]').val('twilio');
             $('.clickatell').hide();
             $('.tonkra').hide();
+            $('.elitbuzz').hide();
             $('.revesms').hide();
             $('.bdbulksms').hide();
             var dataAtive = $(this).find(':selected').data('active');
@@ -118,6 +129,7 @@
             $('select[name="gateway"]').val('revesms');
             $('.clickatell').hide();
             $('.tonkra').hide();
+            $('.elitbuzz').hide();
             $('.bdbulksms').hide();
             $('.twilio').hide();
             var dataAtive = $(this).find(':selected').data('active');
@@ -127,6 +139,7 @@
             $('select[name="gateway"]').val('clickatell');
             $('.twilio').hide();
             $('.tonkra').hide();
+            $('.elitbuzz').hide();
             $('.revesms').hide();
             $('.bdbulksms').hide();
             var dataAtive = $(this).find(':selected').data('active');
@@ -136,6 +149,18 @@
             $('select[name="gateway"]').val('tonkra');
             $('.twilio').hide();
             $('.clickatell').hide();
+            $('.revesms').hide();
+            $('.elitbuzz').hide();
+            $('.bdbulksms').hide();
+            var dataAtive = $(this).find(':selected').data('active');
+            dataAtive == true ? $(".default").prop("checked",true) : $(".default").prop("checked", false);
+        }
+        
+        else if( selectedOption == 'elitbuzz' ){
+            $('select[name="gateway"]').val('elitbuzz');
+            $('.twilio').hide();
+            $('.clickatell').hide();
+            $('.tonkra').hide();
             $('.revesms').hide();
             $('.bdbulksms').hide();
             var dataAtive = $(this).find(':selected').data('active');
@@ -147,6 +172,7 @@
             $('.clickatell').hide();
             $('.revesms').hide();
             $('.tonkra').hide();
+            $('.elitbuzz').hide();
             var dataAtive = $(this).find(':selected').data('active');
             dataAtive == true ? $(".default").prop("checked",true) : $(".default").prop("checked", false);
         }
@@ -154,6 +180,7 @@
             $('.clickatell').hide();
             $('.twilio').hide();
             $('.tonkra').hide();
+            $('.elitbuzz').hide();
             $('.revesms').hide();
             $('.bdbulksms').hide();
         }
@@ -163,12 +190,14 @@
         if( $(this).val() == 'twilio' ){
             $('.clickatell').hide();
             $('.tonkra').hide();
+            $('.elitbuzz').hide();
             $('.revesms').hide();
             $('.bdbulksms').hide();
             $('.twilio').show(500);
             $('.twilio-option').prop('required',true);
             $('.clickatell-option').prop('required',false);
             $('.tonkra-option').prop('required',false);
+            $('.elitbuzz-option').prop('required',false);
             $('.revesms-option').prop('required',false);
             $('.bdbulksms-option').prop('required',false);
             $('#smsId').val($('#twilioId').val());
@@ -179,6 +208,7 @@
         else if( $(this).val() == 'clickatell' ){
             $('.twilio').hide();
             $('.tonkra').hide();
+            $('.elitbuzz').hide();
             $('.revesms').hide();
             $('.clickatell').show(500);
             $('.bdbulksms').hide();
@@ -186,6 +216,7 @@
             $('.twilio-option').prop('required',false);
             $('.revesms-option').prop('required',false);
             $('.tonkra-option').prop('required',false);
+            $('.elitbuzz-option').prop('required',false);
             $('.clickatell-option').prop('required',true);
             $('#smsId').val($('#clickatellId').val());
             var selectedOption = $(this).find(':selected');
@@ -196,6 +227,7 @@
             $('.twilio').hide();
             $('.clickatell').hide();
             $('.revesms').hide();
+            $('.elitbuzz').hide();
             $('.tonkra').show(500);
             $('.bdbulksms').hide();
             $('.bdbulksms-option').prop('required',false);
@@ -203,6 +235,25 @@
             $('.twilio-option').prop('required',false);
             $('.clickatell-option').prop('required',false);
             $('.revesms-option').prop('required',false);
+            $('.elitbuzz-option').prop('required',false);
+            $('#smsId').val($('#tonkraId').val());
+            var selectedOption = $(this).find(':selected');
+            var dataId = selectedOption.data('active');
+            dataId == true ? $(".default").prop("checked",true) : $(".default").prop("checked", false);
+        }
+        else if( $(this).val() == 'elitbuzz' ){
+            $('.twilio').hide();
+            $('.clickatell').hide();
+            $('.revesms').hide();
+            $('.tonkra').hide();
+            $('.elitbuzz').show(500);
+            $('.bdbulksms').hide();
+            $('.bdbulksms-option').prop('required',false);
+            $('.elitbuzz-option').prop('required',true);
+            $('.twilio-option').prop('required',false);
+            $('.clickatell-option').prop('required',false);
+            $('.revesms-option').prop('required',false);
+            $('.tonkra-option').prop('required',false);
             $('#smsId').val($('#tonkraId').val());
             var selectedOption = $(this).find(':selected');
             var dataId = selectedOption.data('active');
@@ -212,6 +263,7 @@
             $('.twilio').hide();
             $('.clickatell').hide();
             $('.tonkra').hide();
+            $('.elitbuzz').hide();
             $('.revesms').show(500);
             $('.bdbulksms').hide();
             $('.bdbulksms-option').prop('required',false);
@@ -219,6 +271,7 @@
             $('.twilio-option').prop('required',false);
             $('.clickatell-option').prop('required',false);
             $('.tonkra-option').prop('required',false);
+            $('.elitbuzz-option').prop('required',false);
             $('#smsId').val($('#revesmsId').val());
             var selectedOption = $(this).find(':selected');
             var dataId = selectedOption.data('active');
@@ -228,6 +281,7 @@
             $('.twilio').hide();
             $('.clickatell').hide();
             $('.tonkra').hide();
+            $('.elitbuzz').hide();
             $('.revesms').hide();
             $('.bdbulksms').show(500);
             $('.bdbulksms-option').prop('required',true);
@@ -235,6 +289,7 @@
             $('.twilio-option').prop('required',false);
             $('.clickatell-option').prop('required',false);
             $('.tonkra-option').prop('required',false);
+            $('.elitbuzz-option').prop('required',false);
             $('#smsId').val($('#bdbulksmsId').val());
             var selectedOption = $(this).find(':selected');
             var dataId = selectedOption.data('active');

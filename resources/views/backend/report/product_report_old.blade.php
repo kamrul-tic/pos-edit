@@ -53,9 +53,6 @@
                     <th>{{trans('file.Product')}}</th>
                     <th>{{trans('file.category')}}</th>
                     <th>{{trans('file.imei_numbers')}}</th>
-                    <th>{{trans('file.unit_cost')}}</th>
-                    <th>{{trans('file.unit_price')}}</th>
-                    <th>{{trans('file.opening_qty')}}</th>
                     <th>{{trans('file.Purchased Amount')}}</th>
                     <th>{{trans('file.Purchased')}} {{trans('file.qty')}}</th>
                     <!-- <th>Transfered Amount</th>
@@ -67,7 +64,6 @@
                     <th>Purchase Returned Amount</th>
                     <th>Purchase Returned Qty</th>
                     <th>{{trans('file.profit')}}</th>
-                    <th>{{trans('file.Adjustment')}}</th>
                     <th>{{trans('file.In Stock')}}</th>
                     <th>{{trans('file.Stock Worth (Price/Cost)')}}</th>
                 </tr>
@@ -80,12 +76,8 @@
                 <th></th>
                 <th></th>
                 <th></th>
-                <th></th>
-                <th></th>
-                <th></th>
                 <!-- <th></th>
                 <th></th> -->
-                <th></th>
                 <th></th>
                 <th></th>
                 <th></th>
@@ -299,9 +291,6 @@ $('#product-report-table').DataTable({
         {"data": "name"},
         {"data": "category"},
         {"data": "imei_numbers"},
-        {"data": "unit_cost"},
-        {"data": "unit_price"},
-        {"data": "opening_qty"},
         {"data": "purchased_amount"},
         {"data": "purchased_qty"},
         {"data": "sold_amount"},
@@ -311,7 +300,6 @@ $('#product-report-table').DataTable({
         {"data": "purchase_returned_amount"},
         {"data": "purchase_returned_qty"},
         {"data": "profit"},
-        {"data": "adjustment"},
         {"data": "in_stock"},
         {"data": "stock_worth"}
     ],
@@ -332,7 +320,7 @@ $('#product-report-table').DataTable({
     "columnDefs": [
         {
             "orderable": false,
-            "targets": [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+            "targets": [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         },
         {
             "render": function (data, type, row, meta) {

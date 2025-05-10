@@ -14,6 +14,11 @@ class Product extends Model
     {
     	return $this->belongsTo('App\Models\Category');
     }
+    
+    public function ProductAdjustment()
+    {
+    	return $this->belongsTo('App\Models\ProductAdjustment');
+    }
 
     public function brand()
     {

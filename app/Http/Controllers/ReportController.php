@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Biller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+use App\Models\Category;
 use App\Models\Product;
 use App\Models\ProductPurchase;
 use App\Models\Product_Sale;
@@ -856,6 +858,295 @@ class ReportController extends Controller
         return [$product_cost, $product_tax];
     }
 
+// me
+// category report
+    public function categoryReport(Request $request)
+    {
+        $data = $request->all();
+        $start_date = $data['start_date'];
+        $end_date = $data['end_date'];
+        $warehouse_id = $data['warehouse_id'];
+        $lims_warehouse_list = Warehouse::where('is_active', true)->get();
+        return view('backend.report.category_report',compact('start_date', 'end_date', 'warehouse_id', 'lims_warehouse_list'));
+    }
+
+
+
+public function categoryReportData(Request $request)
+{
+    $data = $request->all();
+    $start_date = $data['start_date'];
+    $end_date = $data['end_date'];
+    $warehouse_id = $data['warehouse_id'];
+
+    // Get pagination parameters
+    $start = $request->input('start');
+    $length = $request->input('length');
+
+    // Total categories count
+    $totalCatData = DB::table('categories')->where('is_active', true)->count();
+    $totalCatFiltered = $totalCatData;
+
+    // Apply filters and get data with pagination
+    // Fetch data
+    if ($length == -1) {
+        // "All" selected — no pagination
+        $lims_category_all = Category::where('is_active', true)->get();
+    } else {
+        // Normal pagination
+        $lims_category_all = Category::where('is_active', true)
+            ->skip($start)
+            ->take($length)
+            ->get();
+    }
+     
+    // Prepare the data
+    $catData = [];
+    $zero = 0;
+    foreach ($lims_category_all as $category) {
+        $catNestedData['key'] = count($catData);
+        $catNestedData['name'] = $category->name;
+        
+        
+        
+        
+        
+        $allProducts = Product::where('category_id', $category->id)->get();
+        // get all product according to category
+        $totalCost = Product::where('category_id', $category->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->select(DB::raw('SUM(qty * cost) as total'))->value('total');
+        
+        $totalOpeningCost = 0;
+        $totalPurchasedCost = 0;
+        $totalSaleDiscount = 0;
+        $totalSaleAmount = 0;
+        $totalSaleCost = 0;
+        $totalClosingCost = 0;
+
+        foreach ($allProducts as $product) {
+    // opening cost----------------------------------
+            //$allProductsForUintPrice=ProductPurchase::where('product_id', $product->id)->whereDate('created_at', '<' , $start_date)->get();
+            $nowPurchaseCost = 0;
+            $nowSaleCost = 0;
+        
+            // Get purchases before start date for the product, ordered by created_at (FIFO)
+            $purchases = ProductPurchase::where('product_id', $product->id)
+                ->where('created_at', '<', $start_date)
+                ->orderBy('created_at', 'asc')
+                ->get();
+        
+            // Get sales before start date for the product, ordered by created_at
+            $sales = Product_Sale::where('product_id', $product->id)
+                ->where('created_at', '<', $start_date)
+                ->orderBy('created_at', 'asc')
+                ->get();
+        
+            // Prepare a queue of remaining purchase qtys
+            $purchaseQueue = [];
+        
+            foreach ($purchases as $purchase) {
+                if ($purchase->qty > 0) {
+                    $purchaseQueue[] = [
+                        'remaining_qty' => $purchase->qty,
+                        'unit_cost' => $purchase->total / $purchase->qty
+                    ];
+        
+                    $nowPurchaseCost += $purchase->total;
+                }
+            }
+        
+            // Now match each sale to purchases in FIFO style
+            foreach ($sales as $sale) {
+                $saleQty = $sale->qty;
+        
+                while ($saleQty > 0 && count($purchaseQueue) > 0) {
+                    $currentPurchase = &$purchaseQueue[0];
+        
+                    if ($currentPurchase['remaining_qty'] >= $saleQty) {
+                        // Full match
+                        $nowSaleCost += $saleQty * $currentPurchase['unit_cost'];
+                        $currentPurchase['remaining_qty'] -= $saleQty;
+                        $saleQty = 0;
+                    } else {
+                        // Partial match
+                        $nowSaleCost += $currentPurchase['remaining_qty'] * $currentPurchase['unit_cost'];
+                        $saleQty -= $currentPurchase['remaining_qty'];
+                        array_shift($purchaseQueue); // remove this purchase, it's used up
+                    }
+                }
+            }
+        
+            // Calculate opening cost
+            $totalOpeningCost += $nowPurchaseCost - $nowSaleCost;
+            
+    // end opening cost -------------------
+            
+            
+            //$openingCost = ProductPurchase::where('product_id', $product->id)->whereDate('created_at', '<' , $start_date)->sum('total');
+            //$totalOpeningCost+=$openingCost;
+            
+    // start purchased cost --------------------------- 
+            
+            // Get purchases before start date for the product, ordered by created_at (FIFO)
+            $thisTimePurchaseCost = ProductPurchase::where('product_id', $product->id)
+                ->where('created_at', '>=' , $start_date)->where('created_at', '<=' , $end_date)
+                ->sum('total');
+            // purchased cost
+            $totalPurchasedCost += $thisTimePurchaseCost;
+    // end purchased cost ---------------------------   
+    
+    // start sale amount --------------------------- 
+            
+            // $purchaseTotal = ProductPurchase::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+            // $totalPurchaseCost += $purchaseTotal;
+        
+            // Get all unique sale_ids for this product
+            $uniqueSaleIds = Product_Sale::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->distinct()->pluck('sale_id');
+            // Loop through each unique sale_id
+            foreach ($uniqueSaleIds as $saleId) {
+                // Calculate the total sale amount for each sale (by sale_id)
+                $saleTotalPrice = Sale::where('id', $saleId)->sum('total_price');
+                
+                $saleTotalDiscount = Sale::where('id', $saleId)->sum('order_discount');
+                $totalSaleDiscount += $saleTotalDiscount;
+                
+                $saleTotalAmount = Sale::where('id', $saleId)->sum('paid_amount');
+                $totalSaleAmount += $saleTotalAmount;
+            }
+            
+    // end sale amount --------------------------- 
+    
+    // start sale cost --------------------------- 
+            $thisTimeSaleCost = 0;
+        
+            // Get purchases before start date for the product, ordered by created_at (FIFO)
+            $thisTimepurchases = ProductPurchase::where('product_id', $product->id)
+                ->orderBy('created_at', 'asc')
+                ->get();
+        
+            // Get sales before start date for the product, ordered by created_at
+            $thisTimesales = Product_Sale::where('product_id', $product->id)
+                ->where('created_at', '>=' , $start_date)->where('created_at', '<=' , $end_date)
+                ->orderBy('created_at', 'asc')
+                ->get();
+        
+            // Prepare a queue of remaining purchase qtys
+            $thisTimepurchaseQueue = [];
+        
+            foreach ($thisTimepurchases as $thisTimepurchase) {
+                if ($thisTimepurchase->qty > 0) {
+                    $thisTimepurchaseQueue[] = [
+                        'remaining_qty' => $thisTimepurchase->qty,
+                        'unit_cost' => $thisTimepurchase->total / $thisTimepurchase->qty
+                    ];
+        
+                }
+            }
+        
+            // Now match each sale to purchases in FIFO style
+            foreach ($thisTimesales as $thisTimesale) {
+                $thisTimeSaleQty = $thisTimesale->qty;
+        
+                while ($thisTimeSaleQty > 0 && count($thisTimepurchaseQueue) > 0) {
+                    $currentPurchase = &$thisTimepurchaseQueue[0];
+        
+                    if ($currentPurchase['remaining_qty'] >= $thisTimeSaleQty) {
+                        // Full match
+                        $thisTimeSaleCost += $thisTimeSaleQty * $currentPurchase['unit_cost'];
+                        $currentPurchase['remaining_qty'] -= $thisTimeSaleQty;
+                        $thisTimeSaleQty = 0;
+                    } else {
+                        // Partial match
+                        $thisTimeSaleCost += $currentPurchase['remaining_qty'] * $currentPurchase['unit_cost'];
+                        $thisTimeSaleQty -= $currentPurchase['remaining_qty'];
+                        array_shift($thisTimepurchaseQueue); // remove this purchase, it's used up
+                    }
+                }
+            }
+        
+            // Calculate sale cost
+            $totalSaleCost += $thisTimeSaleCost;
+    
+    // end sale cost --------------------------- 
+
+    // closing cost----------------------------------
+            
+            $closingPurchaseCost = 0;
+            $closingSaleCost = 0;
+        
+            // Get purchases before start date for the product, ordered by created_at (FIFO)
+            $closingPurchases = ProductPurchase::where('product_id', $product->id)
+                ->get();
+        
+            // Get sales before start date for the product, ordered by created_at
+            $closingSales = Product_Sale::where('product_id', $product->id)
+                ->get();
+        
+            // Prepare a queue of remaining purchase qtys
+            $closingPurchaseQueue = [];
+        
+            foreach ($closingPurchases as $purchase) {
+                if ($purchase->qty > 0) {
+                    $closingPurchaseQueue[] = [
+                        'remaining_qty' => $purchase->qty,
+                        'unit_cost' => $purchase->total / $purchase->qty
+                    ];
+        
+                    $closingPurchaseCost += $purchase->total;
+                }
+            }
+        
+            // Now match each sale to purchases in FIFO style
+            foreach ($closingSales as $sale) {
+                $saleQty = $sale->qty;
+        
+                while ($saleQty > 0 && count($closingPurchaseQueue) > 0) {
+                    $closingPurchase = &$closingPurchaseQueue[0];
+        
+                    if ($closingPurchase['remaining_qty'] >= $saleQty) {
+                        // Full match
+                        $closingSaleCost += $saleQty * $closingPurchase['unit_cost'];
+                        $closingPurchase['remaining_qty'] -= $saleQty;
+                        $saleQty = 0;
+                    } else {
+                        // Partial match
+                        $closingSaleCost += $closingPurchase['remaining_qty'] * $closingPurchase['unit_cost'];
+                        $saleQty -= $closingPurchase['remaining_qty'];
+                        array_shift($closingPurchaseQueue); // remove this purchase, it's used up
+                    }
+                }
+            }
+        
+            // Calculate Closing cost
+            $totalClosingCost += $closingPurchaseCost - $closingSaleCost;
+            
+    // end closing cost -------------------
+            
+        }
+
+        
+        $catNestedData['opening_cost'] = number_format((float)$totalOpeningCost, config('decimal'), '.', '');
+        $catNestedData['purchased_cost'] = number_format((float)$totalPurchasedCost, config('decimal'), '.', '');
+        $catNestedData['total_cost'] = number_format((float)$totalOpeningCost+$totalPurchasedCost, config('decimal'), '.', '');
+        $catNestedData['sale_amount'] = number_format((float)$totalSaleAmount, config('decimal'), '.', '');
+        $catNestedData['sale_cost'] = number_format((float)$totalSaleCost, config('decimal'), '.', '');
+        $catNestedData['profit_or_lose'] = number_format((float)$totalSaleAmount-$totalSaleCost, config('decimal'), '.', '');
+        $catNestedData['closing_cost'] = number_format((float)$totalClosingCost, config('decimal'), '.', '');
+        
+        $catData[] = $catNestedData;
+    }
+
+    // Return JSON data
+    $json_data = array(
+        "draw" => intval($request->input('draw')),
+        "recordsTotal" => intval($totalCatData),
+        "recordsFiltered" => intval($totalCatFiltered),
+        "data" => $catData
+    );
+
+    return response()->json($json_data);
+}
+
+
     public function productReport(Request $request)
     {
         $data = $request->all();
@@ -865,726 +1156,1362 @@ class ReportController extends Controller
         $lims_warehouse_list = Warehouse::where('is_active', true)->get();
         return view('backend.report.product_report',compact('start_date', 'end_date', 'warehouse_id', 'lims_warehouse_list'));
     }
-
    
+// old
+    // public function productReportData(Request $request)
+    // {
+    //     $data = $request->all();
+    //     $start_date = $data['start_date'];
+    //     $end_date = $data['end_date'];
+    //     $warehouse_id = $data['warehouse_id'];
+    //     $product_id = [];
+    //     $variant_id = [];
+    //     $product_name = [];
+    //     $product_qty = [];
 
-    public function productReportData(Request $request)
-    {
-        $data = $request->all();
-        $start_date = $data['start_date'];
-        $end_date = $data['end_date'];
-        $warehouse_id = $data['warehouse_id'];
-        $product_id = [];
-        $variant_id = [];
-        $product_name = [];
-        $product_qty = [];
+    //     $columns = array(
+    //         1 => 'name'
+    //     );
 
-        $columns = array(
-            1 => 'name'
-        );
-
-        if($request->input('length') != -1)
-            $limit = $request->input('length');
-        else
-            $limit = $totalData;
-        //return $request;
-        $start = $request->input('start');
-        $order = $columns[$request->input('order.0.column')];
-        $dir = $request->input('order.0.dir');
-        if($request->input('search.value')) {
-            $search = $request->input('search.value');
-            $totalData = Product::where([
-                ['name', 'LIKE', "%{$search}%"],
-                ['is_active', true]
-            ])->count();
-            $lims_product_all = Product::with('category')
-                                ->select('id', 'name', 'code', 'category_id', 'qty', 'is_variant', 'price', 'cost')
-                                ->where([
-                                    ['name', 'LIKE', "%{$search}%"],
-                                    ['is_active', true]
-                                ])->offset($start)
-                                  ->limit($limit)
-                                  ->orderBy($order, $dir)
-                                  ->get();
-        }
-        else {
-            $totalData = Product::where('is_active', true)->count();
-            $lims_product_all = Product::with('category')
-                                ->select('id', 'name', 'code', 'category_id', 'qty', 'is_variant', 'price', 'cost')
-                                ->where('is_active', true)
-                                ->offset($start)
-                                ->limit($limit)
-                                ->orderBy($order, $dir)
-                                ->get();
-        }
+    //     if($request->input('length') != -1)
+    //         $limit = $request->input('length');
+    //     else
+    //         $limit = $totalData;
+    //     //return $request;
+    //     $start = $request->input('start');
+    //     $order = $columns[$request->input('order.0.column')];
+    //     $dir = $request->input('order.0.dir');
+    //     if($request->input('search.value')) {
+    //         $search = $request->input('search.value');
+    //         $totalData = Product::where([
+    //             ['name', 'LIKE', "%{$search}%"],
+    //             ['is_active', true]
+    //         ])->count();
+    //         $lims_product_all = Product::with('category')
+    //                             ->select('id', 'name', 'code', 'category_id', 'qty', 'is_variant', 'price', 'cost')
+    //                             ->where([
+    //                                 ['name', 'LIKE', "%{$search}%"],
+    //                                 ['is_active', true]
+    //                             ])->offset($start)
+    //                               ->limit($limit)
+    //                               ->orderBy($order, $dir)
+    //                               ->get();
+    //     }
+    //     else {
+    //         $totalData = Product::where('is_active', true)->count();
+    //         $lims_product_all = Product::with('category')
+    //                             ->select('id', 'name', 'code', 'category_id', 'qty', 'is_variant', 'price', 'cost')
+    //                             ->where('is_active', true)
+    //                             ->offset($start)
+    //                             ->limit($limit)
+    //                             ->orderBy($order, $dir)
+    //                             ->get();
+    //     }
 
         
-        // return $lims_product_all;
-        $totalFiltered = $totalData;
-        $data = [];
-        foreach ($lims_product_all as $product) {
-            $variant_id_all = [];
-            if($warehouse_id == 0) {
-                if($product->is_variant) {
-                    $variant_id_all = ProductVariant::where('product_id', $product->id)->pluck('variant_id', 'item_code');
-                    foreach ($variant_id_all as $item_code => $variant_id) {
-                        $variant_data = Variant::select('name')->find($variant_id);
-                        $nestedData['imei_numbers'] = $this->findImeis($product->id, $variant_id);
-                        $nestedData['key'] = count($data);
-                        $nestedData['name'] = $product->name . ' [' . $variant_data->name . ']'.'<br>'.$item_code;
-                        $nestedData['category'] = $product->category->name;
-                        //purchase data
-                        $nestedData['purchased_amount'] = ProductPurchase::where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+    //     // return $lims_product_all;
+    //     $totalFiltered = $totalData;
+    //     $data = [];
+    //     foreach ($lims_product_all as $product) {
+    //         $variant_id_all = [];
+    //         if($warehouse_id == 0) {
+    //             if($product->is_variant) {
+    //                 $variant_id_all = ProductVariant::where('product_id', $product->id)->pluck('variant_id', 'item_code');
+    //                 foreach ($variant_id_all as $item_code => $variant_id) {
+    //                     $variant_data = Variant::select('name')->find($variant_id);
+    //                     $nestedData['imei_numbers'] = $this->findImeis($product->id, $variant_id);
+    //                     $nestedData['key'] = count($data);
+    //                     $nestedData['name'] = $product->name . ' [' . $variant_data->name . ']'.'<br>'.$item_code;
+    //                     $nestedData['category'] = $product->category->name;
+    //                     //purchase data
+    //                     $nestedData['purchased_amount'] = ProductPurchase::where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
 
-                        $lims_product_purchase_data = ProductPurchase::select('purchase_unit_id', 'qty')->where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+    //                     $lims_product_purchase_data = ProductPurchase::select('purchase_unit_id', 'qty')->where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
 
-                        $purchased_qty = 0;
-                        if(count($lims_product_purchase_data)) {
-                            foreach ($lims_product_purchase_data as $product_purchase) {
-                                $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
-                                if($unit->operator == '*'){
-                                    $purchased_qty += $product_purchase->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $purchased_qty += $product_purchase->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['purchased_qty'] = $purchased_qty;
-                        //transfer data
-                        /*$nestedData['transfered_amount'] = ProductTransfer::where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+    //                     $purchased_qty = 0;
+    //                     if(count($lims_product_purchase_data)) {
+    //                         foreach ($lims_product_purchase_data as $product_purchase) {
+    //                             $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $purchased_qty += $product_purchase->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $purchased_qty += $product_purchase->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['purchased_qty'] = $purchased_qty;
+    //                     //transfer data
+    //                     /*$nestedData['transfered_amount'] = ProductTransfer::where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
 
-                        $lims_product_transfer_data = ProductTransfer::select('purchase_unit_id', 'qty')->where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+    //                     $lims_product_transfer_data = ProductTransfer::select('purchase_unit_id', 'qty')->where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
 
-                        $transfered_qty = 0;
-                        if(count($lims_product_transfer_data)) {
-                            foreach ($lims_product_transfer_data as $product_transfer) {
-                                $unit = DB::table('units')->find($product_transfer->purchase_unit_id);
-                                if($unit->operator == '*'){
-                                    $transfered_qty += $product_transfer->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $transfered_qty += $product_transfer->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['transfered_qty'] = $transfered_qty;*/
-                        //sale data
-                        $nestedData['sold_amount'] = Product_Sale::where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+    //                     $transfered_qty = 0;
+    //                     if(count($lims_product_transfer_data)) {
+    //                         foreach ($lims_product_transfer_data as $product_transfer) {
+    //                             $unit = DB::table('units')->find($product_transfer->purchase_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $transfered_qty += $product_transfer->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $transfered_qty += $product_transfer->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['transfered_qty'] = $transfered_qty;*/
+    //                     //sale data
+    //                     $nestedData['sold_amount'] = Product_Sale::where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
 
-                        $lims_product_sale_data = Product_Sale::select('sale_unit_id', 'qty')->where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+    //                     $lims_product_sale_data = Product_Sale::select('sale_unit_id', 'qty')->where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
 
-                        $sold_qty = 0;
-                        if(count($lims_product_sale_data)) {
-                            foreach ($lims_product_sale_data as $product_sale) {
-                                $unit = DB::table('units')->find($product_sale->sale_unit_id);
-                                if($unit->operator == '*'){
-                                    $sold_qty += $product_sale->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $sold_qty += $product_sale->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['sold_qty'] = $sold_qty;
-                        //return data
-                        $nestedData['returned_amount'] = ProductReturn::where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+    //                     $sold_qty = 0;
+    //                     if(count($lims_product_sale_data)) {
+    //                         foreach ($lims_product_sale_data as $product_sale) {
+    //                             $unit = DB::table('units')->find($product_sale->sale_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $sold_qty += $product_sale->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $sold_qty += $product_sale->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['sold_qty'] = $sold_qty;
+    //                     //return data
+    //                     $nestedData['returned_amount'] = ProductReturn::where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
 
-                        $lims_product_return_data = ProductReturn::select('sale_unit_id', 'qty')->where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+    //                     $lims_product_return_data = ProductReturn::select('sale_unit_id', 'qty')->where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
 
-                        $returned_qty = 0;
-                        if(count($lims_product_return_data)) {
-                            foreach ($lims_product_return_data as $product_return) {
-                                $unit = DB::table('units')->find($product_return->sale_unit_id);
-                                if($unit->operator == '*'){
-                                    $returned_qty += $product_return->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $returned_qty += $product_return->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['returned_qty'] = $returned_qty;
-                        //purchase return data
-                        $nestedData['purchase_returned_amount'] = PurchaseProductReturn::where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+    //                     $returned_qty = 0;
+    //                     if(count($lims_product_return_data)) {
+    //                         foreach ($lims_product_return_data as $product_return) {
+    //                             $unit = DB::table('units')->find($product_return->sale_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $returned_qty += $product_return->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $returned_qty += $product_return->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['returned_qty'] = $returned_qty;
+    //                     //purchase return data
+    //                     $nestedData['purchase_returned_amount'] = PurchaseProductReturn::where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
 
-                        $lims_product_purchase_return_data = PurchaseProductReturn::select('purchase_unit_id', 'qty')->where([
-                                                ['product_id', $product->id],
-                                                ['variant_id', $variant_id]
-                                        ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+    //                     $lims_product_purchase_return_data = PurchaseProductReturn::select('purchase_unit_id', 'qty')->where([
+    //                                             ['product_id', $product->id],
+    //                                             ['variant_id', $variant_id]
+    //                                     ])->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
 
-                        $purchase_returned_qty = 0;
-                        if(count($lims_product_purchase_return_data)) {
-                            foreach ($lims_product_purchase_return_data as $product_purchase_return) {
-                                $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
-                                if($unit->operator == '*'){
-                                    $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
+    //                     $purchase_returned_qty = 0;
+    //                     if(count($lims_product_purchase_return_data)) {
+    //                         foreach ($lims_product_purchase_return_data as $product_purchase_return) {
+    //                             $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
 
-                        if($nestedData['purchased_qty'] > 0)
-                            $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
-                        else
-                           $nestedData['profit'] =  $nestedData['sold_amount'];
-                        $product_variant_data = ProductVariant::where([
-                            ['product_id', $product->id],
-                            ['variant_id', $variant_id]
-                        ])->select('qty')->first();
-                        $nestedData['in_stock'] = $product_variant_data->qty;
-                        if(config('currency_position') == 'prefix')
-                            $nestedData['stock_worth'] = config('currency').' '.($nestedData['in_stock'] * $product->price).' / '.config('currency').' '.($nestedData['in_stock'] * $product->cost);
-                        else
-                            $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price).' '.config('currency').' / '.($nestedData['in_stock'] * $product->cost).' '.config('currency');
+    //                     if($nestedData['purchased_qty'] > 0)
+    //                         $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
+    //                     else
+    //                       $nestedData['profit'] =  $nestedData['sold_amount'];
+    //                     $product_variant_data = ProductVariant::where([
+    //                         ['product_id', $product->id],
+    //                         ['variant_id', $variant_id]
+    //                     ])->select('qty')->first();
+    //                     $nestedData['in_stock'] = $product_variant_data->qty;
+    //                     if(config('currency_position') == 'prefix')
+    //                         $nestedData['stock_worth'] = config('currency').' '.($nestedData['in_stock'] * $product->price).' / '.config('currency').' '.($nestedData['in_stock'] * $product->cost);
+    //                     else
+    //                         $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price).' '.config('currency').' / '.($nestedData['in_stock'] * $product->cost).' '.config('currency');
 
-                        $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
+    //                     $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
 
-                        /*if($nestedData['purchased_qty'] > 0 || $nestedData['transfered_qty'] > 0 || $nestedData['sold_qty'] > 0 || $nestedData['returned_qty'] > 0 || $nestedData['purchase_returned_qty']) {*/
-                            $data[] = $nestedData;
-                        //}
-                    }
-                }
-                else {
-                    $nestedData['imei_numbers'] = $this->findImeis($product->id);
+    //                     /*if($nestedData['purchased_qty'] > 0 || $nestedData['transfered_qty'] > 0 || $nestedData['sold_qty'] > 0 || $nestedData['returned_qty'] > 0 || $nestedData['purchase_returned_qty']) {*/
+    //                         $data[] = $nestedData;
+    //                     //}
+    //                 }
+    //             }
+    //             else {
+    //                 $nestedData['imei_numbers'] = $this->findImeis($product->id);
+    //                 $nestedData['key'] = count($data);
+    //                 $nestedData['name'] = $product->name.'<br>'.$product->code;
+    //                 $nestedData['category'] = $product->category->name;
+    //                 //purchase data
+    //                 $nestedData['purchased_amount'] = ProductPurchase::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+
+    //                 $lims_product_purchase_data = ProductPurchase::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+
+    //                 $purchased_qty = 0;
+    //                 if(count($lims_product_purchase_data)) {
+    //                     foreach ($lims_product_purchase_data as $product_purchase) {
+    //                         $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
+    //                         if($unit->operator == '*'){
+    //                             $purchased_qty += $product_purchase->qty * $unit->operation_value;
+    //                         }
+    //                         elseif($unit->operator == '/'){
+    //                             $purchased_qty += $product_purchase->qty / $unit->operation_value;
+    //                         }
+    //                     }
+    //                 }
+    //                 $nestedData['purchased_qty'] = $purchased_qty;
+    //                 //transfer data
+    //                 /*$nestedData['transfered_amount'] = ProductTransfer::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+
+    //                 $lims_product_transfer_data = ProductTransfer::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+
+    //                 $transfered_qty = 0;
+    //                 if(count($lims_product_transfer_data)) {
+    //                     foreach ($lims_product_transfer_data as $product_transfer) {
+    //                         $unit = DB::table('units')->find($product_transfer->purchase_unit_id);
+    //                         if($unit->operator == '*'){
+    //                             $transfered_qty += $product_transfer->qty * $unit->operation_value;
+    //                         }
+    //                         elseif($unit->operator == '/'){
+    //                             $transfered_qty += $product_transfer->qty / $unit->operation_value;
+    //                         }
+    //                     }
+    //                 }
+    //                 $nestedData['transfered_qty'] = $transfered_qty;*/
+    //                 //sale data
+    //                 $nestedData['sold_amount'] = Product_Sale::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+
+    //                 $lims_product_sale_data = Product_Sale::select('sale_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+
+    //                 $sold_qty = 0;
+    //                 if(count($lims_product_sale_data)) {
+    //                     foreach ($lims_product_sale_data as $product_sale) {
+    //                         if($product_sale->sale_unit_id > 0) {
+    //                             $unit = DB::table('units')->find($product_sale->sale_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $sold_qty += $product_sale->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $sold_qty += $product_sale->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                         else
+    //                             $sold_qty = $product_sale->qty;
+    //                     }
+    //                 }
+    //                 $nestedData['sold_qty'] = $sold_qty;
+    //                 //return data
+    //                 $nestedData['returned_amount'] = ProductReturn::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+
+    //                 $lims_product_return_data = ProductReturn::select('sale_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+
+    //                 $returned_qty = 0;
+    //                 if(count($lims_product_return_data)) {
+    //                     foreach ($lims_product_return_data as $product_return) {
+    //                         $unit = DB::table('units')->find($product_return->sale_unit_id);
+    //                         if($unit->operator == '*'){
+    //                             $returned_qty += $product_return->qty * $unit->operation_value;
+    //                         }
+    //                         elseif($unit->operator == '/'){
+    //                             $returned_qty += $product_return->qty / $unit->operation_value;
+    //                         }
+    //                     }
+    //                 }
+    //                 $nestedData['returned_qty'] = $returned_qty;
+    //                 //purchase return data
+    //                 $nestedData['purchase_returned_amount'] = PurchaseProductReturn::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
+
+    //                 $lims_product_purchase_return_data = PurchaseProductReturn::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
+
+    //                 $purchase_returned_qty = 0;
+    //                 if(count($lims_product_purchase_return_data)) {
+    //                     foreach ($lims_product_purchase_return_data as $product_purchase_return) {
+    //                         $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
+    //                         if($unit->operator == '*'){
+    //                             $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
+    //                         }
+    //                         elseif($unit->operator == '/'){
+    //                             $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
+    //                         }
+    //                     }
+    //                 }
+    //                 $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
+
+    //                 if($nestedData['purchased_qty'] > 0)
+    //                         $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
+    //                 else
+    //                   $nestedData['profit'] =  $nestedData['sold_amount'];
+    //                 $nestedData['in_stock'] = $product->qty;
+    //                 if(config('currency_position') == 'prefix')
+    //                     $nestedData['stock_worth'] = config('currency').' '.($nestedData['in_stock'] * $product->price).' / '.config('currency').' '.($nestedData['in_stock'] * $product->cost);
+    //                 else
+    //                     $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price).' '.config('currency').' / '.($nestedData['in_stock'] * $product->cost).' '.config('currency');
+
+    //                 $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
+    //                 /*if($nestedData['purchased_qty'] > 0 || $nestedData['transfered_qty'] > 0 || $nestedData['sold_qty'] > 0 || $nestedData['returned_qty'] > 0 || $nestedData['purchase_returned_qty']) {*/
+    //                     $data[] = $nestedData;
+    //                 //}
+    //             }
+    //         }
+    //         else {
+    //             if($product->is_variant) {
+    //                 $variant_id_all = ProductVariant::where('product_id', $product->id)->pluck('variant_id', 'item_code');
+
+    //                 foreach ($variant_id_all as $item_code => $variant_id) {
+    //                     $variant_data = Variant::select('name')->find($variant_id);
+    //                     $nestedData['imei_numbers'] = $this->findImeis($product->id, $variant_id);
+    //                     $nestedData['key'] = count($data);
+    //                     $nestedData['name'] = $product->name . ' [' . $variant_data->name . ']'.'<br>'.$item_code;
+    //                     $nestedData['category'] = $product->category->name;
+    //                     //purchase data
+    //                     $nestedData['purchased_amount'] = DB::table('purchases')
+    //                                 ->join('product_purchases', 'purchases.id', '=', 'product_purchases.purchase_id')->where([
+    //                                     ['product_purchases.product_id', $product->id],
+    //                                     ['product_purchases.variant_id', $variant_id],
+    //                                     ['purchases.warehouse_id', $warehouse_id]
+    //                                 ])->whereDate('purchases.created_at','>=', $start_date)->whereDate('purchases.created_at','<=', $end_date)->sum('total');
+    //                     $lims_product_purchase_data = DB::table('purchases')
+    //                                 ->join('product_purchases', 'purchases.id', '=', 'product_purchases.purchase_id')->where([
+    //                                     ['product_purchases.product_id', $product->id],
+    //                                     ['product_purchases.variant_id', $variant_id],
+    //                                     ['purchases.warehouse_id', $warehouse_id]
+    //                                 ])->whereDate('purchases.created_at','>=', $start_date)->whereDate('purchases.created_at','<=', $end_date)
+    //                                     ->select('product_purchases.purchase_unit_id', 'product_purchases.qty')
+    //                                     ->get();
+
+    //                     $purchased_qty = 0;
+    //                     if(count($lims_product_purchase_data)) {
+    //                         foreach ($lims_product_purchase_data as $product_purchase) {
+    //                             $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $purchased_qty += $product_purchase->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $purchased_qty += $product_purchase->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['purchased_qty'] = $purchased_qty;
+    //                     //transfer data
+    //                     /*$nestedData['transfered_amount'] = DB::table('transfers')
+    //                             ->join('product_transfer', 'transfers.id', '=', 'product_transfer.transfer_id')
+    //                             ->where([
+    //                                 ['product_transfer.product_id', $product->id],
+    //                                 ['product_transfer.variant_id', $variant_id],
+    //                                 ['transfers.to_warehouse_id', $warehouse_id]
+    //                             ])->whereDate('transfers.created_at', '>=', $start_date)
+    //                               ->whereDate('transfers.created_at', '<=' , $end_date)
+    //                               ->sum('total');
+    //                     $lims_product_transfer_data = DB::table('transfers')
+    //                             ->join('product_transfer', 'transfers.id', '=', 'product_transfer.transfer_id')
+    //                             ->where([
+    //                                 ['product_transfer.product_id', $product->id],
+    //                                 ['product_transfer.variant_id', $variant_id],
+    //                                 ['transfers.to_warehouse_id', $warehouse_id]
+    //                             ])->whereDate('transfers.created_at', '>=', $start_date)
+    //                               ->whereDate('transfers.created_at', '<=' , $end_date)
+    //                               ->select('product_transfer.purchase_unit_id', 'product_transfer.qty')
+    //                               ->get();
+
+    //                     $transfered_qty = 0;
+    //                     if(count($lims_product_transfer_data)) {
+    //                         foreach ($lims_product_transfer_data as $product_transfer) {
+    //                             $unit = DB::table('units')->find($product_transfer->purchase_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $transfered_qty += $product_transfer->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $transfered_qty += $product_transfer->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['transfered_qty'] = $transfered_qty;*/
+    //                     //sale data
+    //                     $nestedData['sold_amount'] = DB::table('sales')
+    //                                 ->join('product_sales', 'sales.id', '=', 'product_sales.sale_id')->where([
+    //                                     ['product_sales.product_id', $product->id],
+    //                                     ['variant_id', $variant_id],
+    //                                     ['sales.warehouse_id', $warehouse_id]
+    //                                 ])->whereDate('sales.created_at','>=', $start_date)->whereDate('sales.created_at','<=', $end_date)->sum('total');
+    //                     $lims_product_sale_data = DB::table('sales')
+    //                                 ->join('product_sales', 'sales.id', '=', 'product_sales.sale_id')->where([
+    //                                     ['product_sales.product_id', $product->id],
+    //                                     ['variant_id', $variant_id],
+    //                                     ['sales.warehouse_id', $warehouse_id]
+    //                                 ])->whereDate('sales.created_at','>=', $start_date)
+    //                                 ->whereDate('sales.created_at','<=', $end_date)
+    //                                 ->select('product_sales.sale_unit_id', 'product_sales.qty')
+    //                                 ->get();
+
+    //                     $sold_qty = 0;
+    //                     if(count($lims_product_sale_data)) {
+    //                         foreach ($lims_product_sale_data as $product_sale) {
+    //                             $unit = DB::table('units')->find($product_sale->sale_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $sold_qty += $product_sale->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $sold_qty += $product_sale->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['sold_qty'] = $sold_qty;
+    //                     //return data
+    //                     $nestedData['returned_amount'] = DB::table('returns')
+    //                             ->join('product_returns', 'returns.id', '=', 'product_returns.return_id')
+    //                             ->where([
+    //                                 ['product_returns.product_id', $product->id],
+    //                                 ['product_returns.variant_id', $variant_id],
+    //                                 ['returns.warehouse_id', $warehouse_id]
+    //                             ])->whereDate('returns.created_at', '>=', $start_date)
+    //                               ->whereDate('returns.created_at', '<=' , $end_date)
+    //                               ->sum('total');
+
+    //                     $lims_product_return_data = DB::table('returns')
+    //                             ->join('product_returns', 'returns.id', '=', 'product_returns.return_id')
+    //                             ->where([
+    //                                 ['product_returns.product_id', $product->id],
+    //                                 ['product_returns.variant_id', $variant_id],
+    //                                 ['returns.warehouse_id', $warehouse_id]
+    //                             ])->whereDate('returns.created_at', '>=', $start_date)
+    //                               ->whereDate('returns.created_at', '<=' , $end_date)
+    //                               ->select('product_returns.sale_unit_id', 'product_returns.qty')
+    //                               ->get();
+
+    //                     $returned_qty = 0;
+    //                     if(count($lims_product_return_data)) {
+    //                         foreach ($lims_product_return_data as $product_return) {
+    //                             $unit = DB::table('units')->find($product_return->sale_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $returned_qty += $product_return->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $returned_qty += $product_return->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['returned_qty'] = $returned_qty;
+    //                     //purchase return data
+    //                     $nestedData['purchase_returned_amount'] = DB::table('return_purchases')
+    //                             ->join('purchase_product_return', 'return_purchases.id', '=', 'purchase_product_return.return_id')
+    //                             ->where([
+    //                                 ['purchase_product_return.product_id', $product->id],
+    //                                 ['purchase_product_return.variant_id', $variant_id],
+    //                                 ['return_purchases.warehouse_id', $warehouse_id]
+    //                             ])->whereDate('return_purchases.created_at', '>=', $start_date)
+    //                               ->whereDate('return_purchases.created_at', '<=' , $end_date)
+    //                               ->sum('total');
+    //                     $lims_product_purchase_return_data = DB::table('return_purchases')
+    //                             ->join('purchase_product_return', 'return_purchases.id', '=', 'purchase_product_return.return_id')
+    //                             ->where([
+    //                                 ['purchase_product_return.product_id', $product->id],
+    //                                 ['purchase_product_return.variant_id', $variant_id],
+    //                                 ['return_purchases.warehouse_id', $warehouse_id]
+    //                             ])->whereDate('return_purchases.created_at', '>=', $start_date)
+    //                               ->whereDate('return_purchases.created_at', '<=' , $end_date)
+    //                               ->select('purchase_product_return.purchase_unit_id', 'purchase_product_return.qty')
+    //                               ->get();
+
+    //                     $purchase_returned_qty = 0;
+    //                     if(count($lims_product_purchase_return_data)) {
+    //                         foreach ($lims_product_purchase_return_data as $product_purchase_return) {
+    //                             $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                     $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
+
+    //                     if($nestedData['purchased_qty'] > 0)
+    //                         $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
+    //                     else
+    //                       $nestedData['profit'] =  $nestedData['sold_amount'];
+    //                     $product_warehouse = Product_Warehouse::where([
+    //                         ['product_id', $product->id],
+    //                         ['variant_id', $variant_id],
+    //                         ['warehouse_id', $warehouse_id]
+    //                     ])->select('qty')->first();
+    //                     if($product_warehouse)
+    //                         $nestedData['in_stock'] = $product_warehouse->qty;
+    //                     else
+    //                         $nestedData['in_stock'] = 0;
+    //                     if(config('currency_position') == 'prefix')
+    //                         $nestedData['stock_worth'] = config('currency').' '.($nestedData['in_stock'] * $product->price).' / '.config('currency').' '.($nestedData['in_stock'] * $product->cost);
+    //                     else
+    //                         $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price).' '.config('currency').' / '.($nestedData['in_stock'] * $product->cost).' '.config('currency');
+
+    //                     $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
+
+    //                     $data[] = $nestedData;
+    //                 }
+    //             }
+    //             else {
+    //                 $nestedData['imei_numbers'] = $this->findImeis($product->id);
+    //                 $nestedData['key'] = count($data);
+    //                 $nestedData['name'] = $product->name.'<br>'.$product->code;
+    //                 $nestedData['category'] = $product->category->name;
+    //                 //purchase data
+    //                 $nestedData['purchased_amount'] = DB::table('purchases')
+    //                             ->join('product_purchases', 'purchases.id', '=', 'product_purchases.purchase_id')->where([
+    //                                 ['product_purchases.product_id', $product->id],
+    //                                 ['purchases.warehouse_id', $warehouse_id]
+    //                             ])->whereDate('purchases.created_at','>=', $start_date)->whereDate('purchases.created_at','<=', $end_date)->sum('total');
+    //                 $lims_product_purchase_data = DB::table('purchases')
+    //                             ->join('product_purchases', 'purchases.id', '=', 'product_purchases.purchase_id')->where([
+    //                                 ['product_purchases.product_id', $product->id],
+    //                                 ['purchases.warehouse_id', $warehouse_id]
+    //                             ])->whereDate('purchases.created_at','>=', $start_date)->whereDate('purchases.created_at','<=', $end_date)
+    //                                 ->select('product_purchases.purchase_unit_id', 'product_purchases.qty')
+    //                                 ->get();
+
+    //                 $purchased_qty = 0;
+    //                 if(count($lims_product_purchase_data)) {
+    //                     foreach ($lims_product_purchase_data as $product_purchase) {
+    //                         $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
+    //                         if($unit->operator == '*'){
+    //                             $purchased_qty += $product_purchase->qty * $unit->operation_value;
+    //                         }
+    //                         elseif($unit->operator == '/'){
+    //                             $purchased_qty += $product_purchase->qty / $unit->operation_value;
+    //                         }
+    //                     }
+    //                 }
+    //                 $nestedData['purchased_qty'] = $purchased_qty;
+    //                 //transfer data
+    //                 /*$nestedData['transfered_amount'] = DB::table('transfers')
+    //                         ->join('product_transfer', 'transfers.id', '=', 'product_transfer.transfer_id')
+    //                         ->where([
+    //                             ['product_transfer.product_id', $product->id],
+    //                             ['transfers.to_warehouse_id', $warehouse_id]
+    //                         ])->whereDate('transfers.created_at', '>=', $start_date)
+    //                           ->whereDate('transfers.created_at', '<=' , $end_date)
+    //                           ->sum('total');
+    //                 $lims_product_transfer_data = DB::table('transfers')
+    //                         ->join('product_transfer', 'transfers.id', '=', 'product_transfer.transfer_id')
+    //                         ->where([
+    //                             ['product_transfer.product_id', $product->id],
+    //                             ['transfers.to_warehouse_id', $warehouse_id]
+    //                         ])->whereDate('transfers.created_at', '>=', $start_date)
+    //                           ->whereDate('transfers.created_at', '<=' , $end_date)
+    //                           ->select('product_transfer.purchase_unit_id', 'product_transfer.qty')
+    //                           ->get();
+
+    //                 $transfered_qty = 0;
+    //                 if(count($lims_product_transfer_data)) {
+    //                     foreach ($lims_product_transfer_data as $product_transfer) {
+    //                         $unit = DB::table('units')->find($product_transfer->purchase_unit_id);
+    //                         if($unit->operator == '*'){
+    //                             $transfered_qty += $product_transfer->qty * $unit->operation_value;
+    //                         }
+    //                         elseif($unit->operator == '/'){
+    //                             $transfered_qty += $product_transfer->qty / $unit->operation_value;
+    //                         }
+    //                     }
+    //                 }
+    //                 $nestedData['transfered_qty'] = $transfered_qty;*/
+    //                 //sale data
+    //                 $nestedData['sold_amount'] = DB::table('sales')
+    //                             ->join('product_sales', 'sales.id', '=', 'product_sales.sale_id')->where([
+    //                                 ['product_sales.product_id', $product->id],
+    //                                 ['sales.warehouse_id', $warehouse_id]
+    //                             ])->whereDate('sales.created_at','>=', $start_date)->whereDate('sales.created_at','<=', $end_date)->sum('total');
+    //                 $lims_product_sale_data = DB::table('sales')
+    //                             ->join('product_sales', 'sales.id', '=', 'product_sales.sale_id')->where([
+    //                                 ['product_sales.product_id', $product->id],
+    //                                 ['sales.warehouse_id', $warehouse_id]
+    //                             ])->whereDate('sales.created_at','>=', $start_date)
+    //                             ->whereDate('sales.created_at','<=', $end_date)
+    //                             ->select('product_sales.sale_unit_id', 'product_sales.qty')
+    //                             ->get();
+
+    //                 $sold_qty = 0;
+    //                 if(count($lims_product_sale_data)) {
+    //                     foreach ($lims_product_sale_data as $product_sale) {
+    //                         if($product_sale->sale_unit_id) {
+    //                             $unit = DB::table('units')->find($product_sale->sale_unit_id);
+    //                             if($unit->operator == '*'){
+    //                                 $sold_qty += $product_sale->qty * $unit->operation_value;
+    //                             }
+    //                             elseif($unit->operator == '/'){
+    //                                 $sold_qty += $product_sale->qty / $unit->operation_value;
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //                 $nestedData['sold_qty'] = $sold_qty;
+    //                 //return data
+    //                 $nestedData['returned_amount'] = DB::table('returns')
+    //                         ->join('product_returns', 'returns.id', '=', 'product_returns.return_id')
+    //                         ->where([
+    //                             ['product_returns.product_id', $product->id],
+    //                             ['returns.warehouse_id', $warehouse_id]
+    //                         ])->whereDate('returns.created_at', '>=', $start_date)
+    //                           ->whereDate('returns.created_at', '<=' , $end_date)
+    //                           ->sum('total');
+
+    //                 $lims_product_return_data = DB::table('returns')
+    //                         ->join('product_returns', 'returns.id', '=', 'product_returns.return_id')
+    //                         ->where([
+    //                             ['product_returns.product_id', $product->id],
+    //                             ['returns.warehouse_id', $warehouse_id]
+    //                         ])->whereDate('returns.created_at', '>=', $start_date)
+    //                           ->whereDate('returns.created_at', '<=' , $end_date)
+    //                           ->select('product_returns.sale_unit_id', 'product_returns.qty')
+    //                           ->get();
+
+    //                 $returned_qty = 0;
+    //                 if(count($lims_product_return_data)) {
+    //                     foreach ($lims_product_return_data as $product_return) {
+    //                         $unit = DB::table('units')->find($product_return->sale_unit_id);
+    //                         if($unit->operator == '*'){
+    //                             $returned_qty += $product_return->qty * $unit->operation_value;
+    //                         }
+    //                         elseif($unit->operator == '/'){
+    //                             $returned_qty += $product_return->qty / $unit->operation_value;
+    //                         }
+    //                     }
+    //                 }
+    //                 $nestedData['returned_qty'] = $returned_qty;
+    //                 //purchase return data
+    //                 $nestedData['purchase_returned_amount'] = DB::table('return_purchases')
+    //                         ->join('purchase_product_return', 'return_purchases.id', '=', 'purchase_product_return.return_id')
+    //                         ->where([
+    //                             ['purchase_product_return.product_id', $product->id],
+    //                             ['return_purchases.warehouse_id', $warehouse_id]
+    //                         ])->whereDate('return_purchases.created_at', '>=', $start_date)
+    //                           ->whereDate('return_purchases.created_at', '<=' , $end_date)
+    //                           ->sum('total');
+    //                 $lims_product_purchase_return_data = DB::table('return_purchases')
+    //                         ->join('purchase_product_return', 'return_purchases.id', '=', 'purchase_product_return.return_id')
+    //                         ->where([
+    //                             ['purchase_product_return.product_id', $product->id],
+    //                             ['return_purchases.warehouse_id', $warehouse_id]
+    //                         ])->whereDate('return_purchases.created_at', '>=', $start_date)
+    //                           ->whereDate('return_purchases.created_at', '<=' , $end_date)
+    //                           ->select('purchase_product_return.purchase_unit_id', 'purchase_product_return.qty')
+    //                           ->get();
+
+    //                 $purchase_returned_qty = 0;
+    //                 if(count($lims_product_purchase_return_data)) {
+    //                     foreach ($lims_product_purchase_return_data as $product_purchase_return) {
+    //                         $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
+    //                         if($unit->operator == '*'){
+    //                             $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
+    //                         }
+    //                         elseif($unit->operator == '/'){
+    //                             $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
+    //                         }
+    //                     }
+    //                 }
+    //                 $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
+
+    //                 if($nestedData['purchased_qty'] > 0)
+    //                         $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
+    //                 else
+    //                   $nestedData['profit'] =  $nestedData['sold_amount'];
+
+    //                 $product_warehouse = Product_Warehouse::where([
+    //                     ['product_id', $product->id],
+    //                     ['warehouse_id', $warehouse_id]
+    //                 ])->select('qty')->first();
+    //                 if($product_warehouse)
+    //                     $nestedData['in_stock'] = $product_warehouse->qty;
+    //                 else
+    //                     $nestedData['in_stock'] = 0;
+    //                 if(config('currency_position') == 'prefix')
+    //                     $nestedData['stock_worth'] = config('currency').' '.($nestedData['in_stock'] * $product->price).' / '.config('currency').' '.($nestedData['in_stock'] * $product->cost);
+    //                 else
+    //                     $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price).' '.config('currency').' / '.($nestedData['in_stock'] * $product->cost).' '.config('currency');
+
+    //                 $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
+
+    //                 $data[] = $nestedData;
+    //             }
+    //         }
+
+    //     } 
+
+    //     /*$totalData = count($data);
+    //     $totalFiltered = $totalData;*/
+    //     $json_data = array(
+    //         "draw"            => intval($request->input('draw')),
+    //         "recordsTotal"    => intval($totalData),
+    //         "recordsFiltered" => intval($totalFiltered),
+    //         "data"            => $data
+    //     );
+
+    //     echo json_encode($json_data);
+    //     // return json_encode($json_data);
+    // }
+
+// old new 
+// public function productReportData(Request $request)
+// {
+//     $data = $request->all();
+//     $start_date = $data['start_date'];
+//     $end_date = $data['end_date'];
+//     $warehouse_id = $data['warehouse_id'];
+//     $product_id = [];
+//     $variant_id = [];
+//     $product_name = [];
+//     $product_qty = [];
+
+//     $columns = array(
+//         1 => 'name'
+//     );
+
+//     $totalData = Product::where('is_active', true)->count();
+//     $totalFiltered = $totalData;
+
+//     if ($request->input('length') != -1)
+//         $limit = $request->input('length');
+//     else
+//         $limit = $totalData;
+
+//     $start = $request->input('start');
+//     $order = $columns[$request->input('order.0.column')];
+//     $dir = $request->input('order.0.dir');
+
+//     if ($request->input('search.value')) {
+//         $search = $request->input('search.value');
+//         $totalFiltered = Product::where([
+//             ['name', 'LIKE', "%{$search}%"],
+//             ['is_active', true]
+//         ])->count();
+
+//         $lims_product_all = Product::with('category')
+//             ->select('id', 'name', 'code', 'category_id', 'qty', 'is_variant', 'price', 'cost')
+//             ->where([
+//                 ['name', 'LIKE', "%{$search}%"],
+//                 ['is_active', true]
+//             ])
+//             ->offset($start)
+//             ->limit($limit)
+//             ->orderBy($order, $dir)
+//             ->get();
+//     } else {
+//         $lims_product_all = Product::with('category')
+//             ->select('id', 'name', 'code', 'category_id', 'qty', 'is_variant', 'price', 'cost')
+//             ->where('is_active', true)
+//             ->offset($start)
+//             ->limit($limit)
+//             ->orderBy($order, $dir)
+//             ->get();
+//     }
+
+//     $data = [];
+//     foreach ($lims_product_all as $product) {
+//         $variant_id_all = [];
+//         if ($warehouse_id == 0) {
+//             if ($product->is_variant) {
+//                 $variant_id_all = ProductVariant::where('product_id', $product->id)->pluck('variant_id', 'item_code');
+//                 foreach ($variant_id_all as $item_code => $variant_id) {
+//                     $variant_data = Variant::select('name')->find($variant_id);
+//                     $nestedData['imei_numbers'] = $this->findImeis($product->id, $variant_id);
+//                     $nestedData['key'] = count($data);
+//                     $nestedData['name'] = $product->name . ' [' . $variant_data->name . ']' . '<br>' . $item_code;
+//                     $nestedData['category'] = $product->category->name;
+
+//                     // Purchase data
+//                     $nestedData['purchased_amount'] = ProductPurchase::where([
+//                         ['product_id', $product->id],
+//                         ['variant_id', $variant_id]
+//                     ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+//                     $lims_product_purchase_data = ProductPurchase::select('purchase_unit_id', 'qty')->where([
+//                         ['product_id', $product->id],
+//                         ['variant_id', $variant_id]
+//                     ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+//                     $purchased_qty = 0;
+//                     if (count($lims_product_purchase_data)) {
+//                         foreach ($lims_product_purchase_data as $product_purchase) {
+//                             $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
+//                             if ($unit->operator == '*') {
+//                                 $purchased_qty += $product_purchase->qty * $unit->operation_value;
+//                             } elseif ($unit->operator == '/') {
+//                                 $purchased_qty += $product_purchase->qty / $unit->operation_value;
+//                             }
+//                         }
+//                     }
+//                     $nestedData['purchased_qty'] = $purchased_qty;
+
+//                     // Sale data
+//                     $nestedData['sold_amount'] = Product_Sale::where([
+//                         ['product_id', $product->id],
+//                         ['variant_id', $variant_id]
+//                     ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+//                     $lims_product_sale_data = Product_Sale::select('sale_unit_id', 'qty')->where([
+//                         ['product_id', $product->id],
+//                         ['variant_id', $variant_id]
+//                     ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+//                     $sold_qty = 0;
+//                     if (count($lims_product_sale_data)) {
+//                         foreach ($lims_product_sale_data as $product_sale) {
+//                             $unit = DB::table('units')->find($product_sale->sale_unit_id);
+//                             if ($unit->operator == '*') {
+//                                 $sold_qty += $product_sale->qty * $unit->operation_value;
+//                             } elseif ($unit->operator == '/') {
+//                                 $sold_qty += $product_sale->qty / $unit->operation_value;
+//                             }
+//                         }
+//                     }
+//                     $nestedData['sold_qty'] = $sold_qty;
+
+//                     // Return data
+//                     $nestedData['returned_amount'] = ProductReturn::where([
+//                         ['product_id', $product->id],
+//                         ['variant_id', $variant_id]
+//                     ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+//                     $lims_product_return_data = ProductReturn::select('sale_unit_id', 'qty')->where([
+//                         ['product_id', $product->id],
+//                         ['variant_id', $variant_id]
+//                     ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+//                     $returned_qty = 0;
+//                     if (count($lims_product_return_data)) {
+//                         foreach ($lims_product_return_data as $product_return) {
+//                             $unit = DB::table('units')->find($product_return->sale_unit_id);
+//                             if ($unit->operator == '*') {
+//                                 $returned_qty += $product_return->qty * $unit->operation_value;
+//                             } elseif ($unit->operator == '/') {
+//                                 $returned_qty += $product_return->qty / $unit->operation_value;
+//                             }
+//                         }
+//                     }
+//                     $nestedData['returned_qty'] = $returned_qty;
+
+//                     // Purchase return data
+//                     $nestedData['purchase_returned_amount'] = PurchaseProductReturn::where([
+//                         ['product_id', $product->id],
+//                         ['variant_id', $variant_id]
+//                     ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+//                     $lims_product_purchase_return_data = PurchaseProductReturn::select('purchase_unit_id', 'qty')->where([
+//                         ['product_id', $product->id],
+//                         ['variant_id', $variant_id]
+//                     ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+//                     $purchase_returned_qty = 0;
+//                     if (count($lims_product_purchase_return_data)) {
+//                         foreach ($lims_product_purchase_return_data as $product_purchase_return) {
+//                             $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
+//                             if ($unit->operator == '*') {
+//                                 $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
+//                             } elseif ($unit->operator == '/') {
+//                                 $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
+//                             }
+//                         }
+//                     }
+//                     $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
+
+//                     // Profit calculation
+//                     $purchased_amount = $nestedData['purchased_amount'];
+                    
+//                     $purchased_qty = $nestedData['purchased_qty'];
+//                     $sold_qty = $nestedData['sold_qty'];
+//                     $sold_amount = $nestedData['sold_amount'];
+                    
+//                     if ($purchased_qty > 0) {
+//                         $nestedData['profit'] = $sold_amount - (($purchased_amount / $purchased_qty) * $sold_qty);
+//                     } else {
+//                         $nestedData['profit'] = $sold_amount;
+//                     }
+
+//                     $product_variant_data = ProductVariant::where([
+//                         ['product_id', $product->id],
+//                         ['variant_id', $variant_id]
+//                     ])->select('qty')->first();
+//                     $nestedData['in_stock'] = $product_variant_data->qty;
+
+//                     if (config('currency_position') == 'prefix')
+//                         $nestedData['stock_worth'] = config('currency') . ' ' . ($nestedData['in_stock'] * $product->price) . ' / ' . config('currency') . ' ' . ($nestedData['in_stock'] * $product->cost);
+//                     else
+//                         $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price) . ' ' . config('currency') . ' / ' . ($nestedData['in_stock'] * $product->cost) . ' ' . config('currency');
+
+//                     $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
+
+//                     $data[] = $nestedData;
+//                 }
+//             } else {
+//                 // Non-variant products
+//                 $nestedData['imei_numbers'] = $this->findImeis($product->id);
+//                 $nestedData['key'] = count($data);
+//                 $nestedData['name'] = $product->name . '<br>' . $product->code;
+//                 $nestedData['category'] = $product->category->name;
+
+//                 // Purchase data
+//                 $nestedData['purchased_amount'] = ProductPurchase::where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+//                 $lims_product_purchase_data = ProductPurchase::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+//                 $purchased_qty = 0;
+//                 if (count($lims_product_purchase_data)) {
+//                     foreach ($lims_product_purchase_data as $product_purchase) {
+//                         $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
+//                         if ($unit->operator == '*') {
+//                             $purchased_qty += $product_purchase->qty * $unit->operation_value;
+//                         } elseif ($unit->operator == '/') {
+//                             $purchased_qty += $product_purchase->qty / $unit->operation_value;
+//                         }
+//                     }
+//                 }
+//                 $nestedData['purchased_qty'] = $purchased_qty;
+
+//                 // Sale data
+//                 $nestedData['sold_amount'] = Product_Sale::where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+//                 $lims_product_sale_data = Product_Sale::select('sale_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+//                 $sold_qty = 0;
+//                 if (count($lims_product_sale_data)) {
+//                     foreach ($lims_product_sale_data as $product_sale) {
+//                         if ($product_sale->sale_unit_id > 0) {
+//                             $unit = DB::table('units')->find($product_sale->sale_unit_id);
+//                             if ($unit->operator == '*') {
+//                                 $sold_qty += $product_sale->qty * $unit->operation_value;
+//                             } elseif ($unit->operator == '/') {
+//                                 $sold_qty += $product_sale->qty / $unit->operation_value;
+//                             }
+//                         } else
+//                             $sold_qty = $product_sale->qty;
+//                     }
+//                 }
+//                 $nestedData['sold_qty'] = $sold_qty;
+
+//                 // Return data
+//                 $nestedData['returned_amount'] = ProductReturn::where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+//                 $lims_product_return_data = ProductReturn::select('sale_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+//                 $returned_qty = 0;
+//                 if (count($lims_product_return_data)) {
+//                     foreach ($lims_product_return_data as $product_return) {
+//                         $unit = DB::table('units')->find($product_return->sale_unit_id);
+//                         if ($unit->operator == '*') {
+//                             $returned_qty += $product_return->qty * $unit->operation_value;
+//                         } elseif ($unit->operator == '/') {
+//                             $returned_qty += $product_return->qty / $unit->operation_value;
+//                         }
+//                     }
+//                 }
+//                 $nestedData['returned_qty'] = $returned_qty;
+
+//                 // Purchase return data
+//                 $nestedData['purchase_returned_amount'] = PurchaseProductReturn::where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+//                 $lims_product_purchase_return_data = PurchaseProductReturn::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+//                 $purchase_returned_qty = 0;
+//                 if (count($lims_product_purchase_return_data)) {
+//                     foreach ($lims_product_purchase_return_data as $product_purchase_return) {
+//                         $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
+//                         if ($unit->operator == '*') {
+//                             $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
+//                         } elseif ($unit->operator == '/') {
+//                             $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
+//                         }
+//                     }
+//                 }
+//                 $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
+
+//                 // Profit calculation
+//                 if ($nestedData['purchased_qty'] > 0)
+//                     $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
+//                 else
+//                     $nestedData['profit'] = $nestedData['sold_amount'];
+
+//                 $nestedData['in_stock'] = $product->qty;
+
+//                 if (config('currency_position') == 'prefix')
+//                     $nestedData['stock_worth'] = config('currency') . ' ' . ($nestedData['in_stock'] * $product->price) . ' / ' . config('currency') . ' ' . ($nestedData['in_stock'] * $product->cost);
+//                 else
+//                     $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price) . ' ' . config('currency') . ' / ' . ($nestedData['in_stock'] * $product->cost) . ' ' . config('currency');
+
+//                 $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
+
+//                 $data[] = $nestedData;
+//             }
+//         }
+//     }
+
+//     $json_data = array(
+//         "draw" => intval($request->input('draw')),
+//         "recordsTotal" => intval($totalData),
+//         "recordsFiltered" => intval($totalFiltered),
+//         "data" => $data
+//     );
+
+//     return response()->json($json_data);
+// }
+    
+    
+// me --
+public function productReportData(Request $request)
+{
+    $data = $request->all();
+    $start_date = $data['start_date'];
+    $end_date = $data['end_date'];
+    $warehouse_id = $data['warehouse_id'];
+    $product_id = [];
+    $variant_id = [];
+    $product_name = [];
+    $product_qty = [];
+
+    $columns = array(
+        1 => 'name'
+    );
+
+    $totalData = Product::where('is_active', true)->count();
+    $totalFiltered = $totalData;
+
+    if ($request->input('length') != -1)
+        $limit = $request->input('length');
+    else
+        $limit = $totalData;
+
+    $start = $request->input('start');
+    $order = $columns[$request->input('order.0.column')];
+    $dir = $request->input('order.0.dir');
+
+    if ($request->input('search.value')) {
+        $search = $request->input('search.value');
+        $totalFiltered = Product::where([
+            ['name', 'LIKE', "%{$search}%"],
+            ['is_active', true]
+        ])->count();
+
+        $lims_product_all = Product::with('category')->with('ProductAdjustment')
+            ->select(
+        'products.id',
+        'products.name',
+        'products.code',
+        'products.category_id',
+        'products.qty as product_qty', // Alias for Product qty
+        'products.is_variant',
+        'products.price',
+        'products.cost',
+        'product_adjustments.qty as adjustment_qty', // Alias for ProductAdjustment qty
+        'product_adjustments.action' // Accessing action field from ProductAdjustment
+    )
+    ->leftJoin('product_adjustments', 'product_adjustments.product_id', '=', 'products.id') // Join with product_adjustments table
+    ->where([
+                ['products.name', 'LIKE', "%{$search}%"],
+                ['products.is_active', true]
+            ])
+            ->offset($start)
+            ->limit($limit)
+            ->orderBy($order, $dir)
+            ->get();
+    } else {
+        $lims_product_all = Product::with('category', 'ProductAdjustment')
+            ->select(
+        'products.id',
+        'products.name',
+        'products.code',
+        'products.category_id',
+        'products.qty as product_qty', // Alias for Product qty
+        'products.is_variant',
+        'products.price',
+        'products.cost',
+        'product_adjustments.qty as adjustment_qty', // Alias for ProductAdjustment qty
+        'product_adjustments.action' // Accessing action field from ProductAdjustment
+    )
+    ->leftJoin('product_adjustments', 'product_adjustments.product_id', '=', 'products.id') // Join with product_adjustments table
+    ->where('products.is_active', true)
+            ->offset($start)
+            ->limit($limit)
+            ->orderBy($order, $dir)
+            ->get();
+    }
+
+    $data = [];
+    foreach ($lims_product_all as $product) {
+        $variant_id_all = [];
+        if ($warehouse_id == 0) {
+            if ($product->is_variant) {
+                $variant_id_all = ProductVariant::where('product_id', $product->id)->pluck('variant_id', 'item_code');
+                foreach ($variant_id_all as $item_code => $variant_id) {
+                    $variant_data = Variant::select('name')->find($variant_id);
+                    $nestedData['imei_numbers'] = $this->findImeis($product->id, $variant_id);
                     $nestedData['key'] = count($data);
-                    $nestedData['name'] = $product->name.'<br>'.$product->code;
+                    $nestedData['name'] = $product->name . ' [' . $variant_data->name . ']' . '<br>' . $item_code;
                     $nestedData['category'] = $product->category->name;
-                    //purchase data
-                    $nestedData['purchased_amount'] = ProductPurchase::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
 
-                    $lims_product_purchase_data = ProductPurchase::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
-
-                    $purchased_qty = 0;
-                    if(count($lims_product_purchase_data)) {
-                        foreach ($lims_product_purchase_data as $product_purchase) {
-                            $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
-                            if($unit->operator == '*'){
-                                $purchased_qty += $product_purchase->qty * $unit->operation_value;
-                            }
-                            elseif($unit->operator == '/'){
-                                $purchased_qty += $product_purchase->qty / $unit->operation_value;
-                            }
-                        }
-                    }
-                    $nestedData['purchased_qty'] = $purchased_qty;
-                    //transfer data
-                    /*$nestedData['transfered_amount'] = ProductTransfer::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
-
-                    $lims_product_transfer_data = ProductTransfer::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
-
-                    $transfered_qty = 0;
-                    if(count($lims_product_transfer_data)) {
-                        foreach ($lims_product_transfer_data as $product_transfer) {
-                            $unit = DB::table('units')->find($product_transfer->purchase_unit_id);
-                            if($unit->operator == '*'){
-                                $transfered_qty += $product_transfer->qty * $unit->operation_value;
-                            }
-                            elseif($unit->operator == '/'){
-                                $transfered_qty += $product_transfer->qty / $unit->operation_value;
-                            }
-                        }
-                    }
-                    $nestedData['transfered_qty'] = $transfered_qty;*/
-                    //sale data
-                    $nestedData['sold_amount'] = Product_Sale::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
-
-                    $lims_product_sale_data = Product_Sale::select('sale_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
-
-                    $sold_qty = 0;
-                    if(count($lims_product_sale_data)) {
-                        foreach ($lims_product_sale_data as $product_sale) {
-                            if($product_sale->sale_unit_id > 0) {
-                                $unit = DB::table('units')->find($product_sale->sale_unit_id);
-                                if($unit->operator == '*'){
-                                    $sold_qty += $product_sale->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $sold_qty += $product_sale->qty / $unit->operation_value;
-                                }
-                            }
-                            else
-                                $sold_qty = $product_sale->qty;
-                        }
-                    }
-                    $nestedData['sold_qty'] = $sold_qty;
-                    //return data
-                    $nestedData['returned_amount'] = ProductReturn::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
-
-                    $lims_product_return_data = ProductReturn::select('sale_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
-
-                    $returned_qty = 0;
-                    if(count($lims_product_return_data)) {
-                        foreach ($lims_product_return_data as $product_return) {
-                            $unit = DB::table('units')->find($product_return->sale_unit_id);
-                            if($unit->operator == '*'){
-                                $returned_qty += $product_return->qty * $unit->operation_value;
-                            }
-                            elseif($unit->operator == '/'){
-                                $returned_qty += $product_return->qty / $unit->operation_value;
-                            }
-                        }
-                    }
-                    $nestedData['returned_qty'] = $returned_qty;
-                    //purchase return data
-                    $nestedData['purchase_returned_amount'] = PurchaseProductReturn::where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->sum('total');
-
-                    $lims_product_purchase_return_data = PurchaseProductReturn::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=' , $start_date)->whereDate('created_at', '<=' , $end_date)->get();
-
-                    $purchase_returned_qty = 0;
-                    if(count($lims_product_purchase_return_data)) {
-                        foreach ($lims_product_purchase_return_data as $product_purchase_return) {
-                            $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
-                            if($unit->operator == '*'){
-                                $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
-                            }
-                            elseif($unit->operator == '/'){
-                                $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
-                            }
-                        }
-                    }
-                    $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
-
-                    if($nestedData['purchased_qty'] > 0)
-                            $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
-                    else
-                       $nestedData['profit'] =  $nestedData['sold_amount'];
-                    $nestedData['in_stock'] = $product->qty;
-                    if(config('currency_position') == 'prefix')
-                        $nestedData['stock_worth'] = config('currency').' '.($nestedData['in_stock'] * $product->price).' / '.config('currency').' '.($nestedData['in_stock'] * $product->cost);
-                    else
-                        $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price).' '.config('currency').' / '.($nestedData['in_stock'] * $product->cost).' '.config('currency');
-
-                    $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
-                    /*if($nestedData['purchased_qty'] > 0 || $nestedData['transfered_qty'] > 0 || $nestedData['sold_qty'] > 0 || $nestedData['returned_qty'] > 0 || $nestedData['purchase_returned_qty']) {*/
-                        $data[] = $nestedData;
-                    //}
-                }
-            }
-            else {
-                if($product->is_variant) {
-                    $variant_id_all = ProductVariant::where('product_id', $product->id)->pluck('variant_id', 'item_code');
-
-                    foreach ($variant_id_all as $item_code => $variant_id) {
-                        $variant_data = Variant::select('name')->find($variant_id);
-                        $nestedData['imei_numbers'] = $this->findImeis($product->id, $variant_id);
-                        $nestedData['key'] = count($data);
-                        $nestedData['name'] = $product->name . ' [' . $variant_data->name . ']'.'<br>'.$item_code;
-                        $nestedData['category'] = $product->category->name;
-                        //purchase data
-                        $nestedData['purchased_amount'] = DB::table('purchases')
-                                    ->join('product_purchases', 'purchases.id', '=', 'product_purchases.purchase_id')->where([
-                                        ['product_purchases.product_id', $product->id],
-                                        ['product_purchases.variant_id', $variant_id],
-                                        ['purchases.warehouse_id', $warehouse_id]
-                                    ])->whereDate('purchases.created_at','>=', $start_date)->whereDate('purchases.created_at','<=', $end_date)->sum('total');
-                        $lims_product_purchase_data = DB::table('purchases')
-                                    ->join('product_purchases', 'purchases.id', '=', 'product_purchases.purchase_id')->where([
-                                        ['product_purchases.product_id', $product->id],
-                                        ['product_purchases.variant_id', $variant_id],
-                                        ['purchases.warehouse_id', $warehouse_id]
-                                    ])->whereDate('purchases.created_at','>=', $start_date)->whereDate('purchases.created_at','<=', $end_date)
-                                        ->select('product_purchases.purchase_unit_id', 'product_purchases.qty')
-                                        ->get();
-
-                        $purchased_qty = 0;
-                        if(count($lims_product_purchase_data)) {
-                            foreach ($lims_product_purchase_data as $product_purchase) {
-                                $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
-                                if($unit->operator == '*'){
-                                    $purchased_qty += $product_purchase->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $purchased_qty += $product_purchase->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['purchased_qty'] = $purchased_qty;
-                        //transfer data
-                        /*$nestedData['transfered_amount'] = DB::table('transfers')
-                                ->join('product_transfer', 'transfers.id', '=', 'product_transfer.transfer_id')
-                                ->where([
-                                    ['product_transfer.product_id', $product->id],
-                                    ['product_transfer.variant_id', $variant_id],
-                                    ['transfers.to_warehouse_id', $warehouse_id]
-                                ])->whereDate('transfers.created_at', '>=', $start_date)
-                                  ->whereDate('transfers.created_at', '<=' , $end_date)
-                                  ->sum('total');
-                        $lims_product_transfer_data = DB::table('transfers')
-                                ->join('product_transfer', 'transfers.id', '=', 'product_transfer.transfer_id')
-                                ->where([
-                                    ['product_transfer.product_id', $product->id],
-                                    ['product_transfer.variant_id', $variant_id],
-                                    ['transfers.to_warehouse_id', $warehouse_id]
-                                ])->whereDate('transfers.created_at', '>=', $start_date)
-                                  ->whereDate('transfers.created_at', '<=' , $end_date)
-                                  ->select('product_transfer.purchase_unit_id', 'product_transfer.qty')
-                                  ->get();
-
-                        $transfered_qty = 0;
-                        if(count($lims_product_transfer_data)) {
-                            foreach ($lims_product_transfer_data as $product_transfer) {
-                                $unit = DB::table('units')->find($product_transfer->purchase_unit_id);
-                                if($unit->operator == '*'){
-                                    $transfered_qty += $product_transfer->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $transfered_qty += $product_transfer->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['transfered_qty'] = $transfered_qty;*/
-                        //sale data
-                        $nestedData['sold_amount'] = DB::table('sales')
-                                    ->join('product_sales', 'sales.id', '=', 'product_sales.sale_id')->where([
-                                        ['product_sales.product_id', $product->id],
-                                        ['variant_id', $variant_id],
-                                        ['sales.warehouse_id', $warehouse_id]
-                                    ])->whereDate('sales.created_at','>=', $start_date)->whereDate('sales.created_at','<=', $end_date)->sum('total');
-                        $lims_product_sale_data = DB::table('sales')
-                                    ->join('product_sales', 'sales.id', '=', 'product_sales.sale_id')->where([
-                                        ['product_sales.product_id', $product->id],
-                                        ['variant_id', $variant_id],
-                                        ['sales.warehouse_id', $warehouse_id]
-                                    ])->whereDate('sales.created_at','>=', $start_date)
-                                    ->whereDate('sales.created_at','<=', $end_date)
-                                    ->select('product_sales.sale_unit_id', 'product_sales.qty')
-                                    ->get();
-
-                        $sold_qty = 0;
-                        if(count($lims_product_sale_data)) {
-                            foreach ($lims_product_sale_data as $product_sale) {
-                                $unit = DB::table('units')->find($product_sale->sale_unit_id);
-                                if($unit->operator == '*'){
-                                    $sold_qty += $product_sale->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $sold_qty += $product_sale->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['sold_qty'] = $sold_qty;
-                        //return data
-                        $nestedData['returned_amount'] = DB::table('returns')
-                                ->join('product_returns', 'returns.id', '=', 'product_returns.return_id')
-                                ->where([
-                                    ['product_returns.product_id', $product->id],
-                                    ['product_returns.variant_id', $variant_id],
-                                    ['returns.warehouse_id', $warehouse_id]
-                                ])->whereDate('returns.created_at', '>=', $start_date)
-                                  ->whereDate('returns.created_at', '<=' , $end_date)
-                                  ->sum('total');
-
-                        $lims_product_return_data = DB::table('returns')
-                                ->join('product_returns', 'returns.id', '=', 'product_returns.return_id')
-                                ->where([
-                                    ['product_returns.product_id', $product->id],
-                                    ['product_returns.variant_id', $variant_id],
-                                    ['returns.warehouse_id', $warehouse_id]
-                                ])->whereDate('returns.created_at', '>=', $start_date)
-                                  ->whereDate('returns.created_at', '<=' , $end_date)
-                                  ->select('product_returns.sale_unit_id', 'product_returns.qty')
-                                  ->get();
-
-                        $returned_qty = 0;
-                        if(count($lims_product_return_data)) {
-                            foreach ($lims_product_return_data as $product_return) {
-                                $unit = DB::table('units')->find($product_return->sale_unit_id);
-                                if($unit->operator == '*'){
-                                    $returned_qty += $product_return->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $returned_qty += $product_return->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['returned_qty'] = $returned_qty;
-                        //purchase return data
-                        $nestedData['purchase_returned_amount'] = DB::table('return_purchases')
-                                ->join('purchase_product_return', 'return_purchases.id', '=', 'purchase_product_return.return_id')
-                                ->where([
-                                    ['purchase_product_return.product_id', $product->id],
-                                    ['purchase_product_return.variant_id', $variant_id],
-                                    ['return_purchases.warehouse_id', $warehouse_id]
-                                ])->whereDate('return_purchases.created_at', '>=', $start_date)
-                                  ->whereDate('return_purchases.created_at', '<=' , $end_date)
-                                  ->sum('total');
-                        $lims_product_purchase_return_data = DB::table('return_purchases')
-                                ->join('purchase_product_return', 'return_purchases.id', '=', 'purchase_product_return.return_id')
-                                ->where([
-                                    ['purchase_product_return.product_id', $product->id],
-                                    ['purchase_product_return.variant_id', $variant_id],
-                                    ['return_purchases.warehouse_id', $warehouse_id]
-                                ])->whereDate('return_purchases.created_at', '>=', $start_date)
-                                  ->whereDate('return_purchases.created_at', '<=' , $end_date)
-                                  ->select('purchase_product_return.purchase_unit_id', 'purchase_product_return.qty')
-                                  ->get();
-
-                        $purchase_returned_qty = 0;
-                        if(count($lims_product_purchase_return_data)) {
-                            foreach ($lims_product_purchase_return_data as $product_purchase_return) {
-                                $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
-                                if($unit->operator == '*'){
-                                    $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                        $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
-
-                        if($nestedData['purchased_qty'] > 0)
-                            $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
-                        else
-                           $nestedData['profit'] =  $nestedData['sold_amount'];
-                        $product_warehouse = Product_Warehouse::where([
-                            ['product_id', $product->id],
-                            ['variant_id', $variant_id],
-                            ['warehouse_id', $warehouse_id]
-                        ])->select('qty')->first();
-                        if($product_warehouse)
-                            $nestedData['in_stock'] = $product_warehouse->qty;
-                        else
-                            $nestedData['in_stock'] = 0;
-                        if(config('currency_position') == 'prefix')
-                            $nestedData['stock_worth'] = config('currency').' '.($nestedData['in_stock'] * $product->price).' / '.config('currency').' '.($nestedData['in_stock'] * $product->cost);
-                        else
-                            $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price).' '.config('currency').' / '.($nestedData['in_stock'] * $product->cost).' '.config('currency');
-
-                        $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
-
-                        $data[] = $nestedData;
-                    }
-                }
-                else {
-                    $nestedData['imei_numbers'] = $this->findImeis($product->id);
-                    $nestedData['key'] = count($data);
-                    $nestedData['name'] = $product->name.'<br>'.$product->code;
-                    $nestedData['category'] = $product->category->name;
-                    //purchase data
-                    $nestedData['purchased_amount'] = DB::table('purchases')
-                                ->join('product_purchases', 'purchases.id', '=', 'product_purchases.purchase_id')->where([
-                                    ['product_purchases.product_id', $product->id],
-                                    ['purchases.warehouse_id', $warehouse_id]
-                                ])->whereDate('purchases.created_at','>=', $start_date)->whereDate('purchases.created_at','<=', $end_date)->sum('total');
-                    $lims_product_purchase_data = DB::table('purchases')
-                                ->join('product_purchases', 'purchases.id', '=', 'product_purchases.purchase_id')->where([
-                                    ['product_purchases.product_id', $product->id],
-                                    ['purchases.warehouse_id', $warehouse_id]
-                                ])->whereDate('purchases.created_at','>=', $start_date)->whereDate('purchases.created_at','<=', $end_date)
-                                    ->select('product_purchases.purchase_unit_id', 'product_purchases.qty')
-                                    ->get();
-
-                    $purchased_qty = 0;
-                    if(count($lims_product_purchase_data)) {
-                        foreach ($lims_product_purchase_data as $product_purchase) {
-                            $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
-                            if($unit->operator == '*'){
-                                $purchased_qty += $product_purchase->qty * $unit->operation_value;
-                            }
-                            elseif($unit->operator == '/'){
-                                $purchased_qty += $product_purchase->qty / $unit->operation_value;
-                            }
-                        }
-                    }
-                    $nestedData['purchased_qty'] = $purchased_qty;
-                    //transfer data
-                    /*$nestedData['transfered_amount'] = DB::table('transfers')
-                            ->join('product_transfer', 'transfers.id', '=', 'product_transfer.transfer_id')
-                            ->where([
-                                ['product_transfer.product_id', $product->id],
-                                ['transfers.to_warehouse_id', $warehouse_id]
-                            ])->whereDate('transfers.created_at', '>=', $start_date)
-                              ->whereDate('transfers.created_at', '<=' , $end_date)
-                              ->sum('total');
-                    $lims_product_transfer_data = DB::table('transfers')
-                            ->join('product_transfer', 'transfers.id', '=', 'product_transfer.transfer_id')
-                            ->where([
-                                ['product_transfer.product_id', $product->id],
-                                ['transfers.to_warehouse_id', $warehouse_id]
-                            ])->whereDate('transfers.created_at', '>=', $start_date)
-                              ->whereDate('transfers.created_at', '<=' , $end_date)
-                              ->select('product_transfer.purchase_unit_id', 'product_transfer.qty')
-                              ->get();
-
-                    $transfered_qty = 0;
-                    if(count($lims_product_transfer_data)) {
-                        foreach ($lims_product_transfer_data as $product_transfer) {
-                            $unit = DB::table('units')->find($product_transfer->purchase_unit_id);
-                            if($unit->operator == '*'){
-                                $transfered_qty += $product_transfer->qty * $unit->operation_value;
-                            }
-                            elseif($unit->operator == '/'){
-                                $transfered_qty += $product_transfer->qty / $unit->operation_value;
-                            }
-                        }
-                    }
-                    $nestedData['transfered_qty'] = $transfered_qty;*/
-                    //sale data
-                    $nestedData['sold_amount'] = DB::table('sales')
-                                ->join('product_sales', 'sales.id', '=', 'product_sales.sale_id')->where([
-                                    ['product_sales.product_id', $product->id],
-                                    ['sales.warehouse_id', $warehouse_id]
-                                ])->whereDate('sales.created_at','>=', $start_date)->whereDate('sales.created_at','<=', $end_date)->sum('total');
-                    $lims_product_sale_data = DB::table('sales')
-                                ->join('product_sales', 'sales.id', '=', 'product_sales.sale_id')->where([
-                                    ['product_sales.product_id', $product->id],
-                                    ['sales.warehouse_id', $warehouse_id]
-                                ])->whereDate('sales.created_at','>=', $start_date)
-                                ->whereDate('sales.created_at','<=', $end_date)
-                                ->select('product_sales.sale_unit_id', 'product_sales.qty')
-                                ->get();
-
-                    $sold_qty = 0;
-                    if(count($lims_product_sale_data)) {
-                        foreach ($lims_product_sale_data as $product_sale) {
-                            if($product_sale->sale_unit_id) {
-                                $unit = DB::table('units')->find($product_sale->sale_unit_id);
-                                if($unit->operator == '*'){
-                                    $sold_qty += $product_sale->qty * $unit->operation_value;
-                                }
-                                elseif($unit->operator == '/'){
-                                    $sold_qty += $product_sale->qty / $unit->operation_value;
-                                }
-                            }
-                        }
-                    }
-                    $nestedData['sold_qty'] = $sold_qty;
-                    //return data
-                    $nestedData['returned_amount'] = DB::table('returns')
-                            ->join('product_returns', 'returns.id', '=', 'product_returns.return_id')
-                            ->where([
-                                ['product_returns.product_id', $product->id],
-                                ['returns.warehouse_id', $warehouse_id]
-                            ])->whereDate('returns.created_at', '>=', $start_date)
-                              ->whereDate('returns.created_at', '<=' , $end_date)
-                              ->sum('total');
-
-                    $lims_product_return_data = DB::table('returns')
-                            ->join('product_returns', 'returns.id', '=', 'product_returns.return_id')
-                            ->where([
-                                ['product_returns.product_id', $product->id],
-                                ['returns.warehouse_id', $warehouse_id]
-                            ])->whereDate('returns.created_at', '>=', $start_date)
-                              ->whereDate('returns.created_at', '<=' , $end_date)
-                              ->select('product_returns.sale_unit_id', 'product_returns.qty')
-                              ->get();
-
-                    $returned_qty = 0;
-                    if(count($lims_product_return_data)) {
-                        foreach ($lims_product_return_data as $product_return) {
-                            $unit = DB::table('units')->find($product_return->sale_unit_id);
-                            if($unit->operator == '*'){
-                                $returned_qty += $product_return->qty * $unit->operation_value;
-                            }
-                            elseif($unit->operator == '/'){
-                                $returned_qty += $product_return->qty / $unit->operation_value;
-                            }
-                        }
-                    }
-                    $nestedData['returned_qty'] = $returned_qty;
-                    //purchase return data
-                    $nestedData['purchase_returned_amount'] = DB::table('return_purchases')
-                            ->join('purchase_product_return', 'return_purchases.id', '=', 'purchase_product_return.return_id')
-                            ->where([
-                                ['purchase_product_return.product_id', $product->id],
-                                ['return_purchases.warehouse_id', $warehouse_id]
-                            ])->whereDate('return_purchases.created_at', '>=', $start_date)
-                              ->whereDate('return_purchases.created_at', '<=' , $end_date)
-                              ->sum('total');
-                    $lims_product_purchase_return_data = DB::table('return_purchases')
-                            ->join('purchase_product_return', 'return_purchases.id', '=', 'purchase_product_return.return_id')
-                            ->where([
-                                ['purchase_product_return.product_id', $product->id],
-                                ['return_purchases.warehouse_id', $warehouse_id]
-                            ])->whereDate('return_purchases.created_at', '>=', $start_date)
-                              ->whereDate('return_purchases.created_at', '<=' , $end_date)
-                              ->select('purchase_product_return.purchase_unit_id', 'purchase_product_return.qty')
-                              ->get();
-
-                    $purchase_returned_qty = 0;
-                    if(count($lims_product_purchase_return_data)) {
-                        foreach ($lims_product_purchase_return_data as $product_purchase_return) {
-                            $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
-                            if($unit->operator == '*'){
-                                $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
-                            }
-                            elseif($unit->operator == '/'){
-                                $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
-                            }
-                        }
-                    }
-                    $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
-
-                    if($nestedData['purchased_qty'] > 0)
-                            $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
-                    else
-                       $nestedData['profit'] =  $nestedData['sold_amount'];
-
-                    $product_warehouse = Product_Warehouse::where([
+                    // Purchase data
+                    $nestedData['purchased_amount'] = ProductPurchase::where([
                         ['product_id', $product->id],
-                        ['warehouse_id', $warehouse_id]
+                        ['variant_id', $variant_id]
+                    ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+                    $lims_product_purchase_data = ProductPurchase::select('purchase_unit_id', 'qty')->where([
+                        ['product_id', $product->id],
+                        ['variant_id', $variant_id]
+                    ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+                    $purchased_qty = 0;
+                    if (count($lims_product_purchase_data)) {
+                        foreach ($lims_product_purchase_data as $product_purchase) {
+                            $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
+                            if ($unit->operator == '*') {
+                                $purchased_qty += $product_purchase->qty * $unit->operation_value;
+                            } elseif ($unit->operator == '/') {
+                                $purchased_qty += $product_purchase->qty / $unit->operation_value;
+                            }
+                        }
+                    }
+                    $nestedData['purchased_qty'] = $purchased_qty;
+
+                    // Sale data
+                    $nestedData['sold_amount'] = Product_Sale::where([
+                        ['product_id', $product->id],
+                        ['variant_id', $variant_id]
+                    ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+                    $lims_product_sale_data = Product_Sale::select('sale_unit_id', 'qty')->where([
+                        ['product_id', $product->id],
+                        ['variant_id', $variant_id]
+                    ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+                    $sold_qty = 0;
+                    if (count($lims_product_sale_data)) {
+                        foreach ($lims_product_sale_data as $product_sale) {
+                            $unit = DB::table('units')->find($product_sale->sale_unit_id);
+                            if ($unit->operator == '*') {
+                                $sold_qty += $product_sale->qty * $unit->operation_value;
+                            } elseif ($unit->operator == '/') {
+                                $sold_qty += $product_sale->qty / $unit->operation_value;
+                            }
+                        }
+                    }
+                    $nestedData['sold_qty'] = $sold_qty;
+
+                    // Return data
+                    $nestedData['returned_amount'] = ProductReturn::where([
+                        ['product_id', $product->id],
+                        ['variant_id', $variant_id]
+                    ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+                    $lims_product_return_data = ProductReturn::select('sale_unit_id', 'qty')->where([
+                        ['product_id', $product->id],
+                        ['variant_id', $variant_id]
+                    ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+                    $returned_qty = 0;
+                    if (count($lims_product_return_data)) {
+                        foreach ($lims_product_return_data as $product_return) {
+                            $unit = DB::table('units')->find($product_return->sale_unit_id);
+                            if ($unit->operator == '*') {
+                                $returned_qty += $product_return->qty * $unit->operation_value;
+                            } elseif ($unit->operator == '/') {
+                                $returned_qty += $product_return->qty / $unit->operation_value;
+                            }
+                        }
+                    }
+                    $nestedData['returned_qty'] = $returned_qty;
+
+                    // Purchase return data
+                    $nestedData['purchase_returned_amount'] = PurchaseProductReturn::where([
+                        ['product_id', $product->id],
+                        ['variant_id', $variant_id]
+                    ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+                    $lims_product_purchase_return_data = PurchaseProductReturn::select('purchase_unit_id', 'qty')->where([
+                        ['product_id', $product->id],
+                        ['variant_id', $variant_id]
+                    ])->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+                    $purchase_returned_qty = 0;
+                    if (count($lims_product_purchase_return_data)) {
+                        foreach ($lims_product_purchase_return_data as $product_purchase_return) {
+                            $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
+                            if ($unit->operator == '*') {
+                                $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
+                            } elseif ($unit->operator == '/') {
+                                $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
+                            }
+                        }
+                    }
+                    $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
+
+                    // Profit calculation
+                    $purchased_amount = $nestedData['purchased_amount'];
+                    
+                    $purchased_qty = $nestedData['purchased_qty'];
+                    $sold_qty = $nestedData['sold_qty'];
+                    $sold_amount = $nestedData['sold_amount'];
+                    
+                    if ($purchased_qty > 0) {
+                        $nestedData['profit'] = $sold_amount - (($purchased_amount / $purchased_qty) * $sold_qty);
+                    } else {
+                        $nestedData['profit'] = $sold_amount;
+                    }
+
+                    $product_variant_data = ProductVariant::where([
+                        ['product_id', $product->id],
+                        ['variant_id', $variant_id]
                     ])->select('qty')->first();
-                    if($product_warehouse)
-                        $nestedData['in_stock'] = $product_warehouse->qty;
+                    $nestedData['in_stock'] = $product_variant_data->qty;
+
+                    if (config('currency_position') == 'prefix')
+                        $nestedData['stock_worth'] = config('currency') . ' ' . ($nestedData['in_stock'] * $product->price) . ' / ' . config('currency') . ' ' . ($nestedData['in_stock'] * $product->cost);
                     else
-                        $nestedData['in_stock'] = 0;
-                    if(config('currency_position') == 'prefix')
-                        $nestedData['stock_worth'] = config('currency').' '.($nestedData['in_stock'] * $product->price).' / '.config('currency').' '.($nestedData['in_stock'] * $product->cost);
-                    else
-                        $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price).' '.config('currency').' / '.($nestedData['in_stock'] * $product->cost).' '.config('currency');
+                        $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price) . ' ' . config('currency') . ' / ' . ($nestedData['in_stock'] * $product->cost) . ' ' . config('currency');
 
                     $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
 
                     $data[] = $nestedData;
                 }
+            } else {
+                // Non-variant products
+                $nestedData['imei_numbers'] = $this->findImeis($product->id);
+                $nestedData['key'] = count($data);
+                $nestedData['name'] = $product->name . '<br>' . $product->code;
+                $nestedData['category'] = $product->category->name;
+
+                // Purchase data
+                $nestedData['purchased_amount'] = ProductPurchase::where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+                $lims_product_purchase_data = ProductPurchase::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+                $purchased_qty = 0;
+                if (count($lims_product_purchase_data)) {
+                    foreach ($lims_product_purchase_data as $product_purchase) {
+                        $unit = DB::table('units')->find($product_purchase->purchase_unit_id);
+                        if ($unit->operator == '*') {
+                            $purchased_qty += $product_purchase->qty * $unit->operation_value;
+                        } elseif ($unit->operator == '/') {
+                            $purchased_qty += $product_purchase->qty / $unit->operation_value;
+                        }
+                    }
+                }
+                $nestedData['purchased_qty'] = $purchased_qty;
+
+                // Sale data
+                $nestedData['sold_amount'] = Product_Sale::where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+                $lims_product_sale_data = Product_Sale::select('sale_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+                $sold_qty = 0;
+                if (count($lims_product_sale_data)) {
+                    foreach ($lims_product_sale_data as $product_sale) {
+                        if ($product_sale->sale_unit_id > 0) {
+                            $unit = DB::table('units')->find($product_sale->sale_unit_id);
+                            if ($unit->operator == '*') {
+                                $sold_qty += $product_sale->qty * $unit->operation_value;
+                            } elseif ($unit->operator == '/') {
+                                $sold_qty += $product_sale->qty / $unit->operation_value;
+                            }
+                        } else
+                            $sold_qty = $product_sale->qty;
+                    }
+                }
+                $nestedData['sold_qty'] = $sold_qty;
+
+                // Return data
+                $nestedData['returned_amount'] = ProductReturn::where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+                $lims_product_return_data = ProductReturn::select('sale_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+                $returned_qty = 0;
+                if (count($lims_product_return_data)) {
+                    foreach ($lims_product_return_data as $product_return) {
+                        $unit = DB::table('units')->find($product_return->sale_unit_id);
+                        if ($unit->operator == '*') {
+                            $returned_qty += $product_return->qty * $unit->operation_value;
+                        } elseif ($unit->operator == '/') {
+                            $returned_qty += $product_return->qty / $unit->operation_value;
+                        }
+                    }
+                }
+                $nestedData['returned_qty'] = $returned_qty;
+
+                // Purchase return data
+                $nestedData['purchase_returned_amount'] = PurchaseProductReturn::where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->sum('total');
+
+                $lims_product_purchase_return_data = PurchaseProductReturn::select('purchase_unit_id', 'qty')->where('product_id', $product->id)->whereDate('created_at', '>=', $start_date)->whereDate('created_at', '<=', $end_date)->get();
+
+                $purchase_returned_qty = 0;
+                if (count($lims_product_purchase_return_data)) {
+                    foreach ($lims_product_purchase_return_data as $product_purchase_return) {
+                        $unit = DB::table('units')->find($product_purchase_return->purchase_unit_id);
+                        if ($unit->operator == '*') {
+                            $purchase_returned_qty += $product_purchase_return->qty * $unit->operation_value;
+                        } elseif ($unit->operator == '/') {
+                            $purchase_returned_qty += $product_purchase_return->qty / $unit->operation_value;
+                        }
+                    }
+                }
+                $nestedData['purchase_returned_qty'] = $purchase_returned_qty;
+                $nestedData['adjustment'] = $product->action.$product->adjustment_qty;
+                $nestedData['unit_cost'] = $product->cost;
+                $nestedData['unit_price'] = $product->price;
+                $nestedData['opening_qty'] = 0;
+
+                // Profit calculation
+                if ($nestedData['purchased_qty'] > 0)
+                    $nestedData['profit'] = $nestedData['sold_amount'] - (($nestedData['purchased_amount'] / $nestedData['purchased_qty']) * $nestedData['sold_qty']);
+                else
+                    $nestedData['profit'] = $nestedData['sold_amount'];
+
+                $nestedData['in_stock'] = $product->product_qty;
+
+                if (config('currency_position') == 'prefix')
+                    $nestedData['stock_worth'] = config('currency') . ' ' . ($nestedData['in_stock'] * $product->price) . ' / ' . config('currency') . ' ' . ($nestedData['in_stock'] * $product->cost);
+                else
+                    $nestedData['stock_worth'] = ($nestedData['in_stock'] * $product->price) . ' ' . config('currency') . ' / ' . ($nestedData['in_stock'] * $product->cost) . ' ' . config('currency');
+
+                $nestedData['profit'] = number_format((float)$nestedData['profit'], config('decimal'), '.', '');
+
+                $data[] = $nestedData;
             }
-
-        } 
-
-        /*$totalData = count($data);
-        $totalFiltered = $totalData;*/
-        $json_data = array(
-            "draw"            => intval($request->input('draw')),
-            "recordsTotal"    => intval($totalData),
-            "recordsFiltered" => intval($totalFiltered),
-            "data"            => $data
-        );
-
-        echo json_encode($json_data);
-        // return json_encode($json_data);
+        }
     }
+
+    $json_data = array(
+        "draw" => intval($request->input('draw')),
+        "recordsTotal" => intval($totalData),
+        "recordsFiltered" => intval($totalFiltered),
+        "data" => $data
+    );
+
+    return response()->json($json_data);
+}
 
     private function findImeis(string $product_id, string $variant_id = '0')
     {
@@ -1671,7 +2598,7 @@ class ReportController extends Controller
                 $product_id[] = $product->id;
                 $variant_id[] = null;
                 if($warehouse_id == 0)
-                    $product_qty[] = $product->qty;
+                    $product_qty[] = $product->product_qty;
                 else
                     $product_qty[] = Product_Warehouse::where([
                                     ['product_id', $product->id],
@@ -1819,7 +2746,7 @@ class ReportController extends Controller
                         }
                     }
                     $nestedData['purchased_qty'] = $purchased_qty;
-                    $nestedData['in_stock'] = $product->qty;
+                    $nestedData['in_stock'] = $product->product_qty;
 
                     $data[] = $nestedData;
                 }
@@ -2065,7 +2992,7 @@ class ReportController extends Controller
                     }
                     $nestedData['sold_qty'] = $sold_qty;
 
-                    $nestedData['in_stock'] = $product->qty;
+                    $nestedData['in_stock'] = $product->product_qty;
                     $data[] = $nestedData;
                 }
             }

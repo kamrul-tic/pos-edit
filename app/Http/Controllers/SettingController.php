@@ -443,6 +443,7 @@ class SettingController extends Controller
     {
         $settings = ExternalService::all();
         $tonkra = [];
+        $elitbuzz = [];
         $revesms = [];
         $bdbulksms = [];
         $twilio = [];
@@ -454,6 +455,12 @@ class SettingController extends Controller
                     $tonkra['sms_id'] = $setting->id ?? '';
                     $tonkra['active'] = $setting->active ?? '';
                     $tonkra['details'] = json_decode($setting->details) ?? '';
+                }
+                
+                if($setting->name == 'elitbuzz'){
+                    $elitbuzz['sms_id'] = $setting->id ?? '';
+                    $elitbuzz['active'] = $setting->active ?? '';
+                    $elitbuzz['details'] = json_decode($setting->details) ?? '';
                 }
 
                 if($setting->name == 'revesms'){
@@ -487,6 +494,12 @@ class SettingController extends Controller
         $tonkra['api_token']    = $tonkra['details']->api_token  ?? '';
         $tonkra['recipent']     = $tonkra['details']->recipent  ?? '';
         $tonkra['sender_id']    = $tonkra['details']->sender_id  ?? '';
+        
+        $elitbuzz['sms_id']       = $elitbuzz['sms_id'] ?? '';
+        $elitbuzz['active']       = $elitbuzz['active'] ?? '';
+        $elitbuzz['api_key']    = $elitbuzz['details']->api_key  ?? '';
+        $elitbuzz['recipent']     = $elitbuzz['details']->recipent  ?? '';
+        $elitbuzz['sender_id']    = $elitbuzz['details']->sender_id  ?? '';
 
         $revesms['sms_id']      = $revesms['sms_id'] ?? '';
         $revesms['active']      = $revesms['active'] ?? '';
@@ -508,7 +521,7 @@ class SettingController extends Controller
         $clickatell['active']   = $clickatell['active'] ?? '';
         $clickatell['api_key']  = $clickatell['details']->api_key ?? '';
 
-        return view('backend.setting.sms_setting',compact('tonkra','twilio','clickatell','revesms','bdbulksms'));
+        return view('backend.setting.sms_setting',compact('tonkra','elitbuzz','twilio','clickatell','revesms','bdbulksms'));
     }
 
     public function smsSettingStore(Request $request)
@@ -520,6 +533,7 @@ class SettingController extends Controller
 
         $data['active'] = $data['active'] ?? 0;
         $tonkra = [];
+        $elitbuzz = [];
         $revesms = [];
         $bdbulksms = [];
         $twilio = [];
@@ -548,6 +562,12 @@ class SettingController extends Controller
             $tonkra['api_token'] = $data['api_token'];
             $tonkra['sender_id'] = $data['sender_id'];
             $data['details'] = json_encode($tonkra);
+        }
+
+        if($data['gateway'] == 'elitbuzz'){
+            $elitbuzz['api_key'] = $data['api_key'];
+            $elitbuzz['sender_id'] = $data['sender_id'];
+            $data['details'] = json_encode($elitbuzz);
         }
 
         if($data['gateway'] == 'clickatell'){
@@ -594,10 +614,16 @@ class SettingController extends Controller
         $smsData['recipent'] = $data['mobile'];
         $numbers = explode(",", $data['mobile']);
         $smsData['numbers'] = $numbers;
-
-        $this->_smsService->initialize($smsData);
-
-        return redirect()->back()->with('message','SMS sent successfully');
+    
+       // $this->_smsService->initialize($smsData);
+       // return redirect()->back()->with('message','SMS sent successfully');
+        $send=$this->_smsService->initialize($smsData);
+        
+        if($send){
+            return redirect()->back()->with('message','SMS sent successfully');
+        }else{
+        return redirect()->back()->with('message','Problem');
+        }
 
     }
 

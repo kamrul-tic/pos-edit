@@ -23,6 +23,7 @@ use App\Models\GeneralSetting;
 use Stripe\Stripe;
 use Auth;
 use App\Models\User;
+use App\Models\Biller;
 use App\Models\ProductVariant;
 use App\Models\ProductBatch;
 use App\Models\Variant;
@@ -79,7 +80,10 @@ class PurchaseController extends Controller
             foreach($custom_fields as $fieldName) {
                 $field_name[] = str_replace(" ", "_", strtolower($fieldName));
             }
-            return view('backend.purchase.index', compact( 'lims_account_list', 'lims_warehouse_list', 'all_permission', 'lims_pos_setting_data', 'warehouse_id', 'starting_date', 'ending_date', 'purchase_status', 'payment_status', 'custom_fields', 'field_name'));
+             // biller info
+            $biller_data = Biller::where('id', 1)->first();
+            
+            return view('backend.purchase.index', compact( 'lims_account_list', 'lims_warehouse_list', 'all_permission', 'lims_pos_setting_data', 'warehouse_id', 'starting_date', 'ending_date', 'purchase_status', 'payment_status', 'custom_fields', 'field_name', 'biller_data'));
         }
         else
             return redirect()->back()->with('not_permitted', 'Sorry! You are not allowed to access this module');
@@ -291,7 +295,7 @@ class PurchaseController extends Controller
                             </li>'.\Form::close().'
                         </ul>
                     </div>';
-
+                
                 // data for purchase details by one click
                 $user = User::find($purchase->user_id);
                 if($purchase->currency_id) {
@@ -708,6 +712,7 @@ class PurchaseController extends Controller
 
     public function importPurchase(Request $request)
     {
+        // return dd($request->all());
         //get the file
         $upload=$request->file('file');
         $ext = pathinfo($upload->getClientOriginalName(), PATHINFO_EXTENSION);
@@ -718,10 +723,15 @@ class PurchaseController extends Controller
         $filePath=$upload->getRealPath();
         $file_handle = fopen($filePath, 'r');
         $i = 0;
+
+        $qty = [];
+        $tax = [];
+        $discount = [];
         //validate the file
         while (!feof($file_handle) ) {
             $current_line = fgetcsv($file_handle);
             if($current_line && $i > 0){
+                // return dd($current_line);
                 $product_data[] = Product::where([
                                     ['code', $current_line[0]],
                                     ['is_active', true]
@@ -742,12 +752,29 @@ class PurchaseController extends Controller
                 $qty[] = $current_line[1];
                 $cost[] = $current_line[3];
                 $discount[] = $current_line[4];
+                if (isset($current_line[6]) && $product_data[$i-1]->is_imei) {
+                    $product_data[$i-1]->imei_number = $current_line[6];
+                }
             }
             $i++;
         }
+        // return dd($product_data, 'hello');
 
         $data = $request->except('file');
-        $data['reference_no'] = 'pr-' . date("Ymd") . '-'. date("his");
+        if(isset($data['created_at'])) {
+            $dateNow = str_replace("/","-",$data['created_at']);
+            $data['created_at'] = date("Y-m-d H:i:s", strtotime($dateNow));
+            $data['updated_at'] = date("Y-m-d H:i:s", strtotime($dateNow));
+        }
+        else {
+            $data['created_at'] = date("Y-m-d H:i:s");
+            $data['updated_at'] = date("Y-m-d H:i:s");
+        }
+        if(!isset($data['reference_no']))
+        {
+            $data['reference_no'] = 'pr-' . date("Ymd") . '-'. date("his");
+        }
+
         $document = $request->document;
         if ($document) {
             $v = Validator::make(
@@ -780,7 +807,11 @@ class PurchaseController extends Controller
         $lims_purchase_data = Purchase::latest()->first();
 
         foreach ($product_data as $key => $product) {
+            $qty[$key] = (int) str_replace(",", "", $qty[$key]);
+            $cost[$key] = (float) str_replace(",", "", $cost[$key]);
+            $discount[$key] = (float) str_replace(",", "", $discount[$key]);
             if($product['tax_method'] == 1){
+                // return dd($cost);
                 $net_unit_cost = $cost[$key] - $discount[$key];
                 $product_tax = $net_unit_cost * ($tax[$key]['rate'] / 100) * $qty[$key];
                 $total = ($net_unit_cost * $qty[$key]) + $product_tax;
@@ -802,6 +833,13 @@ class PurchaseController extends Controller
                 ])->first();
                 if($product_warehouse) {
                     $product_warehouse->qty += $quantity;
+                    if (isset($product->imei_number)) {
+                        if (empty($product_warehouse->imei_number)) {
+                            $product_warehouse->imei_number = $product->imei_number;
+                        } else {
+                            $product_warehouse->imei_number .= ',' . $product->imei_number;
+                        }
+                    }
                     $product_warehouse->save();
                 }
                 else {
@@ -809,9 +847,20 @@ class PurchaseController extends Controller
                     $lims_product_warehouse_data->product_id = $product['id'];
                     $lims_product_warehouse_data->warehouse_id = $data['warehouse_id'];
                     $lims_product_warehouse_data->qty = $quantity;
+                    if (isset($product->imei_number)) {
+                        $lims_product_warehouse_data->imei_number = $product->imei_number;
+                    }
                     $lims_product_warehouse_data->save();
                 }
+                $temp = $product->imei_number ?? '';
+                if (isset($product->imei_number)) {
+                    unset($product->imei_number);
+                }
+                
                 $product->save();
+
+                if ($temp != '')
+                    $product->imei_number = $temp;
             }
 
             $product_purchase = new ProductPurchase();
@@ -828,6 +877,13 @@ class PurchaseController extends Controller
             $product_purchase->tax_rate = $tax[$key]['rate'];
             $product_purchase->tax = number_format((float)$product_tax, config('decimal'), '.', '');
             $product_purchase->total = number_format((float)$total, config('decimal'), '.', '');
+            if (isset($product->imei_number)) {
+                if (empty($product_purchase->imei_number)) {
+                    $product_purchase->imei_number = $product->imei_number;
+                } else {
+                    $product_purchase->imei_number .= ',' . $product->imei_number;
+                }
+            }
             $product_purchase->save();
             $lims_purchase_data->total_qty += $qty[$key];
             $lims_purchase_data->total_discount += $discount[$key] * $qty[$key];

@@ -64,6 +64,10 @@ use App\Http\Controllers\LabelsController;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 
+
+Route::get('view-my-invoice/{id}', [SaleController::class, 'viewSMSInvoice'])
+    ->withoutMiddleware('auth');
+    
 Route::group(['middleware'=>['web', InitializeTenancyByDomain::class,PreventAccessFromCentralDomains::class] ], function () {
 
         Route::get('migrate', function() {
@@ -111,6 +115,8 @@ Route::group(['middleware'=>['web', InitializeTenancyByDomain::class,PreventAcce
             });
         });
 
+
+    
         Route::group(['middleware' => ['common', 'auth', 'active']], function() {
 
             // Languages Section
@@ -305,6 +311,7 @@ Route::group(['middleware'=>['web', InitializeTenancyByDomain::class,PreventAcce
                 Route::get('sales/get_gift_card', 'getGiftCard');
                 Route::get('sales/paypalSuccess', 'paypalSuccess');
                 Route::get('sales/paypalPaymentSuccess/{id}', 'paypalPaymentSuccess');
+                Route::get('sales/print-invoice/{id}', 'printInvoice')->name('sale.invoice-print');
                 Route::get('sales/gen_invoice/{id}', 'genInvoice')->name('sale.invoice');
                 Route::post('sales/add_payment', 'addPayment')->name('sale.add-payment');
                 Route::get('sales/getpayment/{id}', 'getPayment')->name('sale.get-payment');
@@ -465,6 +472,8 @@ Route::group(['middleware'=>['web', InitializeTenancyByDomain::class,PreventAcce
                     Route::get('best_seller', 'bestSeller');
                     Route::post('best_seller', 'bestSellerByWarehouse')->name('report.bestSellerByWarehouse');
                     Route::post('profit_loss', 'profitLoss')->name('report.profitLoss');
+                    Route::get('category_report', 'categoryReport')->name('report.category');
+                    Route::post('category_report_data', 'categoryReportData');
                     Route::get('product_report', 'productReport')->name('report.product');
                     Route::post('product_report_data', 'productReportData');
                     Route::post('purchase', 'purchaseReport')->name('report.purchase');

@@ -55,7 +55,6 @@
                     <th>{{trans('file.imei_numbers')}}</th>
                     <th>{{trans('file.unit_cost')}}</th>
                     <th>{{trans('file.unit_price')}}</th>
-                    <th>{{trans('file.opening_qty')}}</th>
                     <th>{{trans('file.Purchased Amount')}}</th>
                     <th>{{trans('file.Purchased')}} {{trans('file.qty')}}</th>
                     <!-- <th>Transfered Amount</th>
@@ -77,7 +76,6 @@
                 <th></th>
                 <th></th>
                 <th>{{trans('file.Total')}}</th>
-                <th></th>
                 <th></th>
                 <th></th>
                 <th></th>
@@ -301,7 +299,6 @@ $('#product-report-table').DataTable({
         {"data": "imei_numbers"},
         {"data": "unit_cost"},
         {"data": "unit_price"},
-        {"data": "opening_qty"},
         {"data": "purchased_amount"},
         {"data": "purchased_qty"},
         {"data": "sold_amount"},

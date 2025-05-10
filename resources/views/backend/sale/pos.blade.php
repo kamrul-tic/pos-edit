@@ -1282,7 +1282,7 @@
                                 <p>{{trans('file.Please review the transaction and payments.')}}</p>
                                 <div class="row">
                                     <div class="col-md-12">
-                                        <table class="table table-hover">
+                                        <table class="table table-hover" id="print-content">
                                             <tbody>
                                                 <tr>
                                                     <td>{{trans('file.Cash in Hand')}}:</td>
@@ -1347,18 +1347,92 @@
                                             </tbody>
                                         </table>
                                     </div>
-                                    <div class="col-md-6" id="closing-section">
+                                    <!--<div class="col-md-6" id="closing-section">-->
+                                    <!--    <form action="{{route('cashRegister.close')}}" method="POST">-->
+                                    <!--        @csrf-->
+                                    <!--        <input type="hidden" name="cash_register_id">-->
+                                    <!--        <button type="submit" class="btn btn-primary">{{trans('file.Close Register')}}</button>-->
+                                    <!--    </form>-->
+                                    <!--</div>-->
+                                    
+                                    <!-- me -->
+                                    <div class="col-6" id="closing-section">
                                         <form action="{{route('cashRegister.close')}}" method="POST">
                                             @csrf
                                             <input type="hidden" name="cash_register_id">
                                             <button type="submit" class="btn btn-primary">{{trans('file.Close Register')}}</button>
                                         </form>
                                     </div>
+                                    <div class="col-6 text-right">
+                                        <span class="btn btn-secondary px-3" onclick="printDiv()">Print Register</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
+                
+
+
+<script>
+function printDiv() {
+    const divToPrint = document.getElementById('print-content');
+
+    // Clone the element with current DOM (including values)
+    const clonedContent = divToPrint.cloneNode(true);
+
+    const printWindow = window.open('', '', 'width=800,height=600');
+
+    printWindow.document.write(`
+        <html>
+        <head>
+            <title>Print</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+            <style>
+                @media print {
+                    @page {
+                        size: A4 portrait;
+                        margin: 20mm;
+                    }
+                    body {
+                        font-family: Arial, sans-serif;
+                        padding: 10px;
+                    }
+                    table {
+                        width: 100%;
+                        border-collapse: collapse;
+                    }
+                    td {
+                        padding: 8px;
+                        border: 1px solid #ddd;
+                    }
+                    .text-right {
+                        text-align: right;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <h4 class="text-center">Cash Register Details</h4>
+            <div id="print-content-wrapper"></div>
+        </body>
+        </html>
+    `);
+
+    printWindow.document.close();
+
+    printWindow.onload = function () {
+        // Inject cloned content after window is loaded
+        const wrapper = printWindow.document.getElementById('print-content-wrapper');
+        wrapper.replaceWith(clonedContent);
+
+        printWindow.focus();
+        printWindow.print();
+        printWindow.close();
+    };
+}
+</script>
+
                 <!-- today sale modal -->
                 <div id="today-sale-modal" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true" class="modal fade text-left">
                     <div role="document" class="modal-dialog">

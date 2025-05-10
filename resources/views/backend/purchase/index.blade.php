@@ -109,6 +109,47 @@
     </div>
 </section>
 
+<!--<div id="old-purchase-details" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true" class="modal fade text-left">-->
+<!--    <div role="document" class="modal-dialog">-->
+<!--      <div class="modal-content">-->
+<!--        <div class="container mt-3 pb-2 border-bottom">-->
+<!--            <div class="row">-->
+<!--                <div class="col-md-6 d-print-none">-->
+<!--                    <button id="print-btn" type="button" class="btn btn-default btn-sm"><i class="dripicons-print"></i> {{trans('file.Print')}}</button>-->
+<!--                </div>-->
+<!--                <div class="col-md-6 d-print-none">-->
+<!--                    <button type="button" id="close-btn" data-dismiss="modal" aria-label="Close" class="close"><span aria-hidden="true"><i class="dripicons-cross"></i></span></button>-->
+<!--                </div>-->
+<!--                <div class="col-md-12">-->
+<!--                    <h3 id="exampleModalLabel" class="modal-title text-center container-fluid">{{$general_setting->site_title}}</h3>-->
+<!--                </div>-->
+<!--                <div class="col-md-12 text-center">-->
+<!--                    <i style="font-size: 15px;">{{trans('file.Purchase Details')}}</i>-->
+<!--                </div>-->
+<!--            </div>-->
+<!--        </div>-->
+<!--            <div id="old-purchase-content" class="modal-body"></div>-->
+<!--            <br>-->
+<!--            <table class="table table-bordered product-purchase-list">-->
+<!--                <thead>-->
+<!--                    <th>#</th>-->
+<!--                    <th>{{trans('file.product')}}</th>-->
+<!--                    <th>{{trans('file.Batch No')}}</th>-->
+<!--                    <th>Qty</th>-->
+<!--                    <th>{{trans('file.Returned')}}</th>-->
+<!--                    <th>{{trans('file.Unit Cost')}}</th>-->
+<!--                    <th>{{trans('file.Tax')}}</th>-->
+<!--                    <th>{{trans('file.Discount')}}</th>-->
+<!--                    <th>{{trans('file.Subtotal')}}</th>-->
+<!--                </thead>-->
+<!--                <tbody>-->
+<!--                </tbody>-->
+<!--            </table>-->
+<!--            <div id="purchase-footer" class="modal-body"></div>-->
+<!--      </div>-->
+<!--    </div>-->
+<!--</div>-->
+<!-- me -->
 <div id="purchase-details" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true" class="modal fade text-left">
     <div role="document" class="modal-dialog">
       <div class="modal-content">
@@ -120,16 +161,17 @@
                 <div class="col-md-6 d-print-none">
                     <button type="button" id="close-btn" data-dismiss="modal" aria-label="Close" class="close"><span aria-hidden="true"><i class="dripicons-cross"></i></span></button>
                 </div>
-                <div class="col-md-12">
-                    <h3 id="exampleModalLabel" class="modal-title text-center container-fluid">{{$general_setting->site_title}}</h3>
+                <div class="col-12">
+                    <!--<h3 id="exampleModalLabel" class="modal-title text-center container-fluid">{{$general_setting->site_title}}</h3>-->
+                    <img src="{{url('images/biller', $biller_data->image)}}" style="width:100%;">
                 </div>
-                <div class="col-md-12 text-center">
+                <div class="col-12 text-center">
                     <i style="font-size: 15px;">{{trans('file.Purchase Details')}}</i>
                 </div>
             </div>
         </div>
             <div id="purchase-content" class="modal-body"></div>
-            <br>
+            
             <table class="table table-bordered product-purchase-list">
                 <thead>
                     <th>#</th>
@@ -145,7 +187,23 @@
                 <tbody>
                 </tbody>
             </table>
-            <div id="purchase-footer" class="modal-body"></div>
+            
+            <div class="p-2" id="note_footer">
+                
+            </div>
+            <div id="purchase-footer" class="modal-body py-0">
+                <div>
+                    <div style="width:35%; float:right; margin-top:20px; margin-bottom:20px; padding:10px; border: 1px solid lightgray;">
+                        <div class="text-start" style="margin-bottom:50px;">
+                            <span>Created by:</span> <span>{{$biller_data->name}}</span>
+                        </div>
+                        <div class="text-start">
+                            <span>Date:</span> <span id="created_date_footer"></span>
+                        </div>
+    
+                    </div>
+                </div>
+            </div>
       </div>
     </div>
 </div>
@@ -748,14 +806,34 @@
     }
 
     function purchaseDetails(purchase){
-        var htmltext = '<strong>{{trans("file.Date")}}: </strong>'+purchase[0]+'<br><strong>{{trans("file.reference")}}: </strong>'+purchase[1]+'<br><strong>{{trans("file.Purchase Status")}}: </strong>'+purchase[2]+'<br><strong>{{trans("file.Currency")}}: </strong>'+purchase[26];
+        // var htmltext = '<div class="border p-2 bg-light"><div class="row"><div class="col-6"><strong>{{trans("file.Date")}}: </strong>'+purchase[0]+'<br><strong>{{trans("file.reference")}}: </strong>'+purchase[1]+'<br><strong>{{trans("file.Purchase Status")}}: </strong>'+purchase[2];
+        // if(purchase[27])
+        //     htmltext += '<br><strong>{{trans("file.Exchange Rate")}}: </strong>'+purchase[27]+'<br>';
+        // else
+        //     htmltext += '<br><strong>{{trans("file.Exchange Rate")}}: </strong>N/A<br>';
+        // if(purchase[25])
+        //     htmltext += '<strong>{{trans("file.Attach Document")}}: </strong><a href="documents/purchase/'+purchase[25]+'">Download</a><br></div>';
+        // else
+        //     htmltext += '</div>';
+            
+        // htmltext += '<div class="col-6"><strong>{{trans("file.From")}}: '+purchase[7]+'</strong><br>Company: '+purchase[8]+'<br>Address: '+purchase[11]+', '+purchase[12]+'<br>Phone: '+purchase[10]+'</div></div></div></div>';
+        
+        
+        var htmltext = '<div class="mx-2"><div style="width:50%; float:left; padding-bottom:14px; padding-top:10px;"><strong>{{trans("file.Date")}}: </strong>'+purchase[0]+'<br><strong>{{trans("file.reference")}}: </strong>'+purchase[1]+'<br><strong>{{trans("file.Purchase Status")}}: </strong>'+purchase[2];
         if(purchase[27])
             htmltext += '<br><strong>{{trans("file.Exchange Rate")}}: </strong>'+purchase[27]+'<br>';
         else
             htmltext += '<br><strong>{{trans("file.Exchange Rate")}}: </strong>N/A<br>';
         if(purchase[25])
-            htmltext += '<strong>{{trans("file.Attach Document")}}: </strong><a href="documents/purchase/'+purchase[25]+'">Download</a><br>';
-        htmltext += '<br><div class="row"><div class="col-md-6"><strong>{{trans("file.From")}}:</strong><br>'+purchase[7]+'<br>'+purchase[8]+'<br>'+purchase[9]+'<br>'+purchase[10]+'<br>'+purchase[11]+'<br>'+purchase[12]+'</div><div class="col-md-6"><div class="float-right"><strong>{{trans("file.To")}}:</strong><br>'+purchase[4]+'<br>'+purchase[5]+'<br>'+purchase[6]+'</div></div></div>';
+            htmltext += '<strong>{{trans("file.Attach Document")}}: </strong><a href="documents/purchase/'+purchase[25]+'">Download</a><br></div>';
+        else
+            htmltext += '</div>';
+            
+        htmltext += '<div style="width:50%; float:left; padding-bottom:14px; padding-top:10px;"><strong>{{trans("file.From")}}: '+purchase[7]+'</strong><br>Company: '+purchase[8]+'<br>Address: '+purchase[11]+', '+purchase[12]+'<br>Phone: '+purchase[10]+'</div></div></div>';
+        
+       // htmltext += '<br><div class="row"><div class="col-md-6"><strong>{{trans("file.From")}}:</strong><br>'+purchase[7]+'<br>'+purchase[8]+'<br>'+purchase[9]+'<br>'+purchase[10]+'<br>'+purchase[11]+'<br>'+purchase[12]+'</div><div class="col-md-6"><div class="float-right"><strong>{{trans("file.To")}}:</strong><br>'+purchase[4]+'<br>'+purchase[5]+'<br>'+purchase[6]+'</div></div></div>';
+        
+        
         $(".product-purchase-list tbody").remove();
         $.get('purchases/product_purchase/' + purchase[3], function(data) {
             // console.log(data);
@@ -801,27 +879,33 @@
                 cols += '<td>' + purchase[15] + '</td>';
                 newRow.append(cols);
                 newBody.append(newRow);
+                
+                if(purchase[16] > 0){
+                    var newRow = $("<tr>");
+                    cols = '';
+                    cols += '<td colspan=8><strong>{{trans("file.Order Tax")}}:</strong></td>';
+                    cols += '<td>' + purchase[16] + '(' + purchase[17] + '%)' + '</td>';
+                    newRow.append(cols);
+                    newBody.append(newRow);
+                }
 
-                var newRow = $("<tr>");
-                cols = '';
-                cols += '<td colspan=8><strong>{{trans("file.Order Tax")}}:</strong></td>';
-                cols += '<td>' + purchase[16] + '(' + purchase[17] + '%)' + '</td>';
-                newRow.append(cols);
-                newBody.append(newRow);
-
-                var newRow = $("<tr>");
-                cols = '';
-                cols += '<td colspan=8><strong>{{trans("file.Order Discount")}}:</strong></td>';
-                cols += '<td>' + purchase[18] + '</td>';
-                newRow.append(cols);
-                newBody.append(newRow);
-
-                var newRow = $("<tr>");
-                cols = '';
-                cols += '<td colspan=8><strong>{{trans("file.Shipping Cost")}}:</strong></td>';
-                cols += '<td>' + purchase[19] + '</td>';
-                newRow.append(cols);
-                newBody.append(newRow);
+                
+                if(purchase[18] > 0){
+                    var newRow = $("<tr>");
+                    cols = '';
+                    cols += '<td colspan=8><strong>{{trans("file.Order Discount")}}:</strong></td>';
+                    cols += '<td>' + purchase[18] + '</td>';
+                    newRow.append(cols);
+                    newBody.append(newRow);
+                }
+                if(purchase[22]){
+                    var newRow = $("<tr>");
+                    cols = '';
+                    cols += '<td colspan=8><strong>{{trans("file.Shipping Cost")}}:</strong></td>';
+                    cols += '<td>' + purchase[19] + '</td>';
+                    newRow.append(cols);
+                    newBody.append(newRow);
+                }
 
                 var newRow = $("<tr>");
                 cols = '';
@@ -848,10 +932,16 @@
              }
         });
 
-        var htmlfooter = '<p><strong>{{trans("file.Note")}}:</strong> '+purchase[22]+'</p><strong>{{trans("file.Created By")}}:</strong><br>'+purchase[23]+'<br>'+purchase[24];
+        //var htmlfooter = '<p><strong>{{trans("file.Note")}}:</strong> '+purchase[22]+'</p><strong>{{trans("file.Created By")}}:</strong><br>'+purchase[23]+'<br>'+purchase[24];
+        if(purchase[22]){
+            var htmlfooterNote = '<p><strong>{{trans("file.Note")}}: </strong> '+purchase[22]+'</p>';
+            $('#note_footer').html(htmlfooterNote);
+        }
+        
 
         $('#purchase-content').html(htmltext);
-        $('#purchase-footer').html(htmlfooter);
+        //$('#purchase-footer').html(htmlfooter);
+        $('#created_date_footer').text(purchase[0]);
         $('#purchase-details').modal('show');
     }
 

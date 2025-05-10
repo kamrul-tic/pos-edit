@@ -63,6 +63,7 @@ use App\Models\SaleWarrantyGuarantee;
 use App\Models\SmsTemplate;
 use App\Services\SmsService;
 use App\SMSProviders\TonkraSms;
+use App\SMSProviders\ElitbuzzSms;
 use App\ViewModels\ISmsModel;
 use DateTime;
 use PHPUnit\Framework\MockObject\Stub\ReturnSelf;
@@ -162,6 +163,8 @@ class SaleController extends Controller
             2 => 'reference_no',
             7 => 'grand_total',
             8 => 'paid_amount',
+            9 => 'cost',
+            10 => 'profit',
         );
 
         $warehouse_id = $request->input('warehouse_id');
@@ -395,6 +398,31 @@ class SaleController extends Controller
                 $nestedData['returned_amount'] = number_format($returned_amount, config('decimal'));
                 $nestedData['paid_amount'] = number_format($sale->paid_amount, config('decimal'));
                 $nestedData['due'] = number_format($sale->grand_total - $returned_amount - $sale->paid_amount, config('decimal'));
+                
+                // get product purchase cost
+                $productSales = DB::table('products')
+                    ->join('product_sales', 'products.id', '=', 'product_sales.product_id')
+                    ->where('product_sales.sale_id', $sale->id) // Removed the extra period before 'product_sales'
+                    ->select('products.cost', 'products.price', 'product_sales.*') // Added closing quotes for the 'select'
+                    ->get();
+                
+                $productCost=0;
+                $netUnitPrice=0;
+                
+                foreach($productSales as $productSale){
+                    $productCost+=$productSale->cost*$productSale->qty;
+                    
+                    //$productProfit+=$productSale->total-(($productSale->cost+$productSale->tax)*$productSale->qty)+$productSale->discount;
+                    $netUnitPrice+=($productSale->net_unit_price+$productSale->tax)*$productSale->qty;
+                }
+                
+                //$productProfit= $sale->grand_total-($productCost+$sale->total_tax+$sale->order_discount);
+                
+                $productProfit= $sale->grand_total-$productCost;
+                
+                $nestedData['cost'] = number_format($productCost, config('decimal'));
+                $nestedData['profit'] = number_format($productProfit, config('decimal'));
+                
                 //fetching custom fields data
                 foreach($field_names as $field_name) {
                     $nestedData[$field_name] = $sale->$field_name;
@@ -481,7 +509,7 @@ class SaleController extends Controller
                 else
                     $currency_code = 'N/A';
 
-                $nestedData['sale'] = array( '[ "'.date(config('date_format'), strtotime($sale->created_at->toDateString())).'"', ' "'.$sale->reference_no.'"', ' "'.$sale_status.'"', ' "'.$sale->biller->name.'"', ' "'.$sale->biller->company_name.'"', ' "'.$sale->biller->email.'"', ' "'.$sale->biller->phone_number.'"', ' "'.$sale->biller->address.'"', ' "'.$sale->biller->city.'"', ' "'.$sale->customer->name.'"', ' "'.$sale->customer->phone_number.'"', ' "'.$sale->customer->address.'"', ' "'.$sale->customer->city.'"', ' "'.$sale->id.'"', ' "'.$sale->total_tax.'"', ' "'.$sale->total_discount.'"', ' "'.$sale->total_price.'"', ' "'.$sale->order_tax.'"', ' "'.$sale->order_tax_rate.'"', ' "'.$sale->order_discount.'"', ' "'.$sale->shipping_cost.'"', ' "'.$sale->grand_total.'"', ' "'.$sale->paid_amount.'"', ' "'.preg_replace('/[\n\r]/', "<br>", $sale->sale_note).'"', ' "'.preg_replace('/[\n\r]/', "<br>", $sale->staff_note).'"', ' "'.$sale->user->name.'"', ' "'.$sale->user->email.'"', ' "'.$sale->warehouse->name.'"', ' "'.$coupon_code.'"', ' "'.$sale->coupon_discount.'"', ' "'.$sale->document.'"', ' "'.$currency_code.'"', ' "'.$sale->exchange_rate.'"]'
+                $nestedData['sale'] = array( '[ "'.date(config('date_format'), strtotime($sale->created_at->toDateString())).'"', ' "'.$sale->reference_no.'"', ' "'.$sale_status.'"', ' "'.$sale->biller->name.'"', ' "'.$sale->biller->company_name.'"', ' "'.$sale->biller->email.'"', ' "'.$sale->biller->phone_number.'"', ' "'.$sale->biller->address.'"', ' "'.$sale->biller->city.'"', ' "'.$sale->customer->name.'"', ' "'.$sale->customer->phone_number.'"', ' "'.$sale->customer->address.'"', ' "'.$sale->customer->city.'"', ' "'.$sale->id.'"', ' "'.$sale->total_tax.'"', ' "'.$sale->total_discount.'"', ' "'.$sale->total_price.'"', ' "'.$sale->order_tax.'"', ' "'.$sale->order_tax_rate.'"', ' "'.$sale->order_discount.'"', ' "'.$sale->shipping_cost.'"', ' "'.$sale->grand_total.'"', ' "'.$sale->paid_amount.'"', ' "'.$sale->cost.'"', ' "'.$sale->profit.'"', ' "'.preg_replace('/[\n\r]/', "<br>", $sale->sale_note).'"', ' "'.preg_replace('/[\n\r]/', "<br>", $sale->staff_note).'"', ' "'.$sale->user->name.'"', ' "'.$sale->user->email.'"', ' "'.$sale->warehouse->name.'"', ' "'.$coupon_code.'"', ' "'.$sale->coupon_discount.'"', ' "'.$sale->document.'"', ' "'.$currency_code.'"', ' "'.$sale->exchange_rate.'"]'
                 );
                 $data[] = $nestedData;
             }
@@ -564,9 +592,14 @@ class SaleController extends Controller
                 $data['created_at'] = date("Y-m-d H:i:s");
             //return dd($data);
 
+        // if have paying_amount then
+            if($data['paying_amount']){
+                $data['paid_amount'] = $data['paying_amount'];
+            }
+            
             //set the paid_amount value to $new_data variable
             $new_data['paid_amount'] = $data['paid_amount'];
-
+            
             if (is_array($data['paid_amount'])) {
                 $data['paid_amount'] = array_sum($data['paid_amount']);
             }
@@ -579,6 +612,7 @@ class SaleController extends Controller
                 // {
                 //     $balance = $data['grand_total'] - $paid_amount;
                 // }
+                
                 $balance = $data['grand_total'] - $data['paid_amount'];
 
                 if (is_array($data['paid_amount'])) {
@@ -642,7 +676,7 @@ class SaleController extends Controller
             }
 
             // return dd($data);
-            //inserting data to sales table
+        //inserting data to sales table
             $lims_sale_data = Sale::create($data);
             
 
@@ -979,6 +1013,52 @@ class SaleController extends Controller
             $this->_smsModel->initialize($smsData);
         }
         //sms send end
+ 
+ 
+$myUrl = request()->getHost();
+$myHostParts = explode('.', $myUrl);
+$mySubdomain = $myHostParts[0];
+
+if($mySubdomain=="kamrul11" || $mySubdomain=="mayerdua" || $mySubdomain=="mfp" || $mySubdomain=="atkbd"){
+    $saleData = DB::table('sales')->where([
+            ['customer_id', $lims_customer_data->id],
+            //['payment_status', '!=', 4],
+            ['created_at', '<', $lims_sale_data->created_at]
+        ])
+        ->selectRaw('SUM(grand_total) as grand_total,SUM(paid_amount) as paid_amount')
+        ->first();
+    //$returned_amount = DB::table('returns')->where('sale_id', $sale->id)->sum('grand_total');
+    $totalDue = $saleData->grand_total  - $saleData->paid_amount;
+    
+    
+    
+    // Set the required parameters (you can get these dynamically if needed)
+    $api_key = "R600017767c2ae6a5cec26.80490482";  // Replace with your actual API key
+    $sender_id = "8809601012527";  
+    $recipients = $lims_customer_data->phone_number;  
+    
+    $message = "Dear ".$lims_customer_data->name.",\nThank you for purchasing with Mayer Dua Food Products.\nYour Invoice BDT ".$lims_sale_data->total_price.",\nPrevious due ".$totalDue.",\nGrand Total ".($totalDue + $lims_sale_data->grand_total).",\nPaid ".$lims_sale_data->paid_amount.",\nBalance ".($totalDue + $lims_sale_data->grand_total) - $lims_sale_data->paid_amount."\nInvoice details: https://".$mySubdomain.".tradeaidbd.com/view-my-invoice/".$lims_sale_data->id;
+    
+    // Call the send_sms method and capture the response
+    $response = $this->send_sms($api_key, $sender_id, $recipients, $message);
+}
+
+
+    //  $mail_data['email'] = $lims_customer_data->email;
+    //         $mail_data['reference_no'] = $lims_sale_data->reference_no;
+    //         $mail_data['sale_status'] = $lims_sale_data->sale_status;
+    //         $mail_data['payment_status'] = $lims_sale_data->payment_status;
+    //         $mail_data['total_qty'] = $lims_sale_data->total_qty;
+    //         $mail_data['total_price'] = $lims_sale_data->total_price;
+    //         $mail_data['order_tax'] = $lims_sale_data->order_tax;
+    //         $mail_data['order_tax_rate'] = $lims_sale_data->order_tax_rate;
+    //         $mail_data['order_discount'] = $lims_sale_data->order_discount;
+    //         $mail_data['shipping_cost'] = $lims_sale_data->shipping_cost;
+    //         $mail_data['grand_total'] = $lims_sale_data->grand_total;
+    //         $mail_data['paid_amount'] = $lims_sale_data->paid_amount;
+            
+            
+        
 
         $general_setting = DB::table('general_settings')->select('modules')->first();
         if(in_array('restaurant',explode(',',$general_setting->modules))){
@@ -987,7 +1067,9 @@ class SaleController extends Controller
         // return dd($lims_sale_data);
         //api calling code
         if($lims_sale_data->sale_status == '1' && isset($data['draft']) && $data['draft'])
-            return redirect('sales/gen_invoice/'.$lims_sale_data->id);
+            // old ivoice
+           // return redirect('sales/gen_invoice/'.$lims_sale_data->id);
+            return redirect('sales/print-invoice/'.$lims_sale_data->id);
         elseif($lims_sale_data->sale_status == '1') // sale status completed
             return $lims_sale_data->id;
         elseif(in_array('restaurant',explode(',',$general_setting->modules)) && $lims_sale_data->sale_status == '5')
@@ -998,6 +1080,52 @@ class SaleController extends Controller
             return redirect('sales')->with('message', $message);
 
     }
+
+
+// my sms
+public function send_sms($api_key, $sender_id, $recipients, $message)
+    {
+        // Define the API endpoint
+        $url = "https://www.880sms.com/smsapi"; // Ensure this is the correct endpoint
+
+        // Prepare the data for sending (check if the parameter names are correct)
+        $data = [
+            "api_key" => $api_key,        // Your API key
+            "type" => "text",             // Content type (plain text)
+            "contacts" => $recipients,    // Comma-separated phone numbers
+            "senderid" => $sender_id,    // Your sender ID
+            "msg" => $message,            // The message you want to send
+        ];
+
+        // Initialize cURL
+        $ch = curl_init();
+
+        // Set cURL options
+        curl_setopt($ch, CURLOPT_URL, $url);               // Set the API URL
+        curl_setopt($ch, CURLOPT_POST, 1);                 // Use POST method
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data)); // Attach data properly
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);    // Get the response
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);   // Disable SSL verification (for local dev)
+
+        // Execute cURL request and capture the response
+        $response = curl_exec($ch);
+
+        // Check for cURL errors
+        if (curl_errno($ch)) {
+            // Handle error and return the error message
+            $error_message = curl_error($ch);
+            curl_close($ch);
+            return "Error: " . $error_message;
+        }
+
+        // Close the cURL session
+        curl_close($ch);
+
+        // Return the response (could be success or failure message from the SMS API)
+        return $response;
+    }
+    
+    
 
     public function getSoldItem($id)
     {
@@ -1627,7 +1755,49 @@ class SaleController extends Controller
         if($role->hasPermissionTo('sales-edit')) {
             $lims_biller_list = Biller::where('is_active', true)->get();
             $lims_reward_point_setting_data = RewardPointSetting::latest()->first();
+            
+            
             $lims_customer_list = Customer::where('is_active', true)->get();
+            
+// foreach ($lims_customer_list as $customer) {
+//     $saleData = DB::table('sales')
+//         ->where('customer_id', $customer->id)
+//         ->selectRaw('SUM(grand_total) as grand_total, SUM(paid_amount) as paid_amount')
+//         ->first();
+
+//     $returned_amount = DB::table('sales')
+//         ->join('returns', 'sales.id', '=', 'returns.sale_id')
+//         ->where('sales.customer_id', $customer->id)
+//         ->where('sales.payment_status', '!=', 4)
+//         ->sum('returns.grand_total');
+
+//     $grand_total = $saleData->grand_total ?? 0;
+//     $paid_amount = $saleData->paid_amount ?? 0;
+
+//     $customer->total_due = ($grand_total - $returned_amount) - $paid_amount;
+// }
+            
+            
+            // $returned_amount = DB::table('sales')
+            //                         ->join('returns', 'sales.id', '=', 'returns.sale_id')
+            //                         ->where([
+            //                             ['sales.customer_id', $lims_customer_data->id],
+            //                             ['sales.payment_status', '!=', 4]
+            //                         ])
+            //                         ->sum('returns.grand_total');
+            
+            // $saleData = DB::table('sales')->where([
+            //             ['customer_id', $lims_customer_data->id]
+            //         ])
+            //         ->selectRaw('SUM(grand_total) as grand_total,SUM(paid_amount) as paid_amount')
+            //         ->first();
+                    
+            // $totalDue = ($saleData->grand_total - $returned_amount) - $saleData->paid_amount;
+                    
+                    
+                    
+                    
+                    
             $lims_customer_group_all = CustomerGroup::where('is_active', true)->get();
             $lims_warehouse_list = Warehouse::where('is_active', true)->get();
             $lims_tax_list = Tax::where('is_active', true)->get();
@@ -2863,6 +3033,365 @@ class SaleController extends Controller
         }
         elseif($lims_sale_data->sale_type == 'online'){
             return view('backend.sale.a4_invoice', compact('lims_sale_data', 'currency_code', 'lims_product_sale_data', 'lims_biller_data', 'lims_warehouse_data', 'lims_customer_data', 'lims_payment_data', 'numberInWords', 'paid_by_info', 'sale_custom_fields', 'customer_custom_fields', 'product_custom_fields', 'qrText', 'totalDue'));
+        }
+        elseif($lims_pos_setting_data->invoice_option == 'thermal' && $lims_pos_setting_data->thermal_invoice_size == '58'){
+            return view('backend.sale.invoice58', compact('lims_sale_data', 'currency_code', 'lims_product_sale_data', 'lims_biller_data', 'lims_warehouse_data', 'lims_customer_data', 'lims_payment_data', 'numberInWords', 'sale_custom_fields', 'customer_custom_fields', 'product_custom_fields', 'qrText', 'totalDue'));
+        }
+        else{
+            return view('backend.sale.invoice', compact('lims_sale_data', 'currency_code', 'lims_product_sale_data', 'lims_biller_data', 'lims_warehouse_data', 'lims_customer_data', 'lims_payment_data', 'numberInWords', 'sale_custom_fields', 'customer_custom_fields', 'product_custom_fields', 'qrText', 'totalDue'));
+        }
+    }
+
+
+// me- for specific db connection according to subdomain
+private function setDatabaseConnection($subdomain)
+{
+    // Dynamically set the database connection based on the subdomain
+    $databaseName = $subdomain;  // Use the subdomain as the database name
+
+    // Ensure you do not overwrite the 'mysql' connection; we use a dynamic connection name
+    $connectionConfig = [
+        'driver' => 'mysql',
+        'host' => env('DB_HOST', '127.0.0.1'),
+        'port' => env('DB_PORT', '3306'),
+        'database' => $databaseName,  // Set dynamic DB name based on the subdomain
+        'username' => env('DB_USERNAME', 'tradeaid_Admin'),
+        'password' => env('DB_PASSWORD', 'OnlyAdmin1234'),
+        'unix_socket' => env('DB_SOCKET', ''),
+        'charset' => 'utf8mb4',
+        'collation' => 'utf8mb4_unicode_ci',
+        'prefix' => '',
+        'strict' => true,
+        'engine' => null,
+    ];
+
+    // Set the dynamic database configuration
+    config(['database.connections.dynamic_connection' => $connectionConfig]);
+
+    // Set this dynamic connection to be the default for DB queries
+    DB::setDefaultConnection('dynamic_connection');
+}
+
+// view invoice from qr code and sms
+public function viewSMSInvoice($id){
+    // Get the current subdomain from the request
+    $myUrl = request()->getHost();
+    $myHostParts = explode('.', $myUrl);
+    $mySubdomain = $myHostParts[0];  // Extract the subdomain (e.g., 'kamrul11', 'mina11')
+
+    // Dynamically set the database connection based on the subdomain
+    $this->setDatabaseConnection('tradeaid_'.$mySubdomain);
+    
+    $lims_sale_data = Sale::find($id);
+
+        $lims_product_sale_data = Product_Sale::where('sale_id', $id)->get();
+        if(cache()->has('biller_list'))
+        {
+            $lims_biller_data = cache()->get('biller_list')->find($lims_sale_data->biller_id);
+        }
+        else{
+            $lims_biller_data = Biller::find($lims_sale_data->biller_id);
+        }
+        if(cache()->has('warehouse_list'))
+        {
+            $lims_warehouse_data = cache()->get('warehouse_list')->find($lims_sale_data->warehouse_id);
+        }
+        else{
+            $lims_warehouse_data = Warehouse::find($lims_sale_data->warehouse_id);
+        }
+
+        if(cache()->has('customer_list'))
+        {
+            $lims_customer_data = cache()->get('customer_list')->find($lims_sale_data->customer_id);
+        }
+        else{
+            $lims_customer_data = Customer::find($lims_sale_data->customer_id);
+        }
+
+        $lims_payment_data = Payment::where('sale_id', $id)->get();
+        if(cache()->has('pos_setting'))
+        {
+            $lims_pos_setting_data = cache()->get('pos_setting');
+        }
+        else{
+            $lims_pos_setting_data = PosSetting::select('invoice_option','thermal_invoice_size')->latest()->first();
+        }
+
+        $supportedIdentifiers = [
+            'al', 'fr_BE', 'pt_BR', 'bg', 'cs', 'dk', 'nl', 'et', 'ka', 'de', 'fr', 'hu', 'id', 'it', 'lt', 'lv',
+            'ms', 'fa', 'pl', 'ro', 'sk', 'es', 'ru', 'sv', 'tr', 'tk', 'ua', 'yo'
+        ]; //ar, az, ku, mk - not supported
+
+        $defaultLocale = \App::getLocale();
+        $numberToWords = new NumberToWords();
+
+        if(in_array($defaultLocale, $supportedIdentifiers))
+            $numberTransformer = $numberToWords->getNumberTransformer($defaultLocale);
+        else
+            $numberTransformer = $numberToWords->getNumberTransformer('en');
+
+
+        if(config('is_zatca')) {
+            //generating base64 TLV format qrtext for qrcode
+            $qrText = GenerateQrCode::fromArray([
+                new Seller(config('company_name')), // seller name
+                new TaxNumber(config('vat_registration_number')), // seller tax number
+                new InvoiceDate($lims_sale_data->created_at->toDateString()."T".$lims_sale_data->created_at->toTimeString()), // invoice date as Zulu ISO8601 @see https://en.wikipedia.org/wiki/ISO_8601
+                new InvoiceTotalAmount(number_format((float)$lims_sale_data->grand_total, 4, '.', '')), // invoice total amount
+                new InvoiceTaxAmount(number_format((float)($lims_sale_data->total_tax+$lims_sale_data->order_tax), 4, '.', '')) // invoice tax amount
+                // TODO :: Support others tags
+            ])->toBase64();
+        }
+        else {
+            $qrText = "https://".$mySubdomain.".tradeaidbd.com/view-my-invoice/".$lims_sale_data->id;
+        }
+        if(is_null($lims_sale_data->exchange_rate))
+        {
+            $numberInWords = $numberTransformer->toWords($lims_sale_data->grand_total);
+            $currency_code = cache()->get('currency')->code;
+        } else {
+            $numberInWords = $numberTransformer->toWords($lims_sale_data->grand_total);
+            $sale_currency = DB::table('currencies')->select('code')->where('id',$lims_sale_data->currency_id)->first();
+            $currency_code = $sale_currency->code;
+        }
+        $paying_methods = Payment::where('sale_id', $id)->pluck('paying_method')->toArray();
+        $paid_by_info = '';
+        foreach ($paying_methods as $key => $paying_method) {
+            if($key)
+                $paid_by_info .= ', '.$paying_method;
+            else
+                $paid_by_info = $paying_method;
+        }
+        $sale_custom_fields = CustomField::where([
+                                ['belongs_to', 'sale'],
+                                ['is_invoice', true]
+                            ])->pluck('name');
+        $customer_custom_fields = CustomField::where([
+                                ['belongs_to', 'customer'],
+                                ['is_invoice', true]
+                            ])->pluck('name');
+        $product_custom_fields = CustomField::where([
+                                ['belongs_to', 'product'],
+                                ['is_invoice', true]
+                            ])->pluck('name');
+        $returned_amount = DB::table('sales')
+                                    ->join('returns', 'sales.id', '=', 'returns.sale_id')
+                                    ->where([
+                                        ['sales.customer_id', $lims_customer_data->id],
+                                        ['sales.payment_status', '!=', 4]
+                                    ])
+                                    ->sum('returns.grand_total');
+        $saleData = DB::table('sales')->where([
+                        ['customer_id', $lims_customer_data->id],
+                        //['payment_status', '!=', 4],
+                        ['created_at', '<', $lims_sale_data->created_at]
+                    ])
+                    ->selectRaw('SUM(grand_total) as grand_total,SUM(paid_amount) as paid_amount')
+                    ->first();
+
+        foreach ($lims_product_sale_data as $sale_data) {
+            // IMEIs
+            if (isset($sale_data->imei_number)) {
+                $temp = array_unique(explode(',', $sale_data->imei_number));
+                $sale_data->imei_number = implode(',', $temp);
+            }
+            // Warranty/Guarantee
+            $product = Product::select(
+                'warranty',
+                'warranty_type',
+                'guarantee',
+                'guarantee_type',
+            )->where('id', $sale_data->product_id)->first();
+
+            if (isset($product->warranty)) {
+                if ($product->warranty === 1) {
+
+                }
+                $sale_data->warranty_duration = $product->warranty . ' ' . ($product->warranty === 1 ? str_replace('s', '', $product->warranty_type) : $product->warranty_type);
+                $sale_data->warranty_end = $this->getWarrantyGuaranteeEndDate([
+                    'sale_date' => $lims_sale_data->created_at,
+                    'duration' => $product->warranty,
+                    'type' => $product->warranty_type,
+                ]);
+            }
+            if (isset($product->guarantee)) {
+                $sale_data->guarantee_duration = $product->guarantee . ' ' . ($product->guarantee === 1 ? str_replace('s', '', $product->guarantee_type) : $product->guarantee_type);
+                $sale_data->guarantee_end = $this->getWarrantyGuaranteeEndDate([
+                    'sale_date' => $lims_sale_data->created_at,
+                    'duration' => $product->guarantee,
+                    'type' => $product->guarantee_type,
+                ]);
+            }
+        }
+        $totalDue = ($saleData->grand_total - $returned_amount) - $saleData->paid_amount;
+    
+    $general_setting = DB::table('general_settings')->first();
+    // Return the view as usual
+    
+    return view('backend.sale.a4_print_invoice', compact('general_setting','lims_sale_data', 'currency_code', 'lims_product_sale_data', 'lims_biller_data', 'lims_warehouse_data', 'lims_customer_data', 'lims_payment_data', 'numberInWords', 'paid_by_info', 'sale_custom_fields', 'customer_custom_fields', 'product_custom_fields', 'qrText', 'totalDue'));
+    
+}
+
+
+
+
+    public function printInvoice($id)
+    {
+  //me      
+$myUrl = request()->getHost();
+$myHostParts = explode('.', $myUrl);
+$mySubdomain = $myHostParts[0];
+
+        $lims_sale_data = Sale::find($id);
+
+        $lims_product_sale_data = Product_Sale::where('sale_id', $id)->get();
+        if(cache()->has('biller_list'))
+        {
+            $lims_biller_data = cache()->get('biller_list')->find($lims_sale_data->biller_id);
+        }
+        else{
+            $lims_biller_data = Biller::find($lims_sale_data->biller_id);
+        }
+        if(cache()->has('warehouse_list'))
+        {
+            $lims_warehouse_data = cache()->get('warehouse_list')->find($lims_sale_data->warehouse_id);
+        }
+        else{
+            $lims_warehouse_data = Warehouse::find($lims_sale_data->warehouse_id);
+        }
+
+        if(cache()->has('customer_list'))
+        {
+            $lims_customer_data = cache()->get('customer_list')->find($lims_sale_data->customer_id);
+        }
+        else{
+            $lims_customer_data = Customer::find($lims_sale_data->customer_id);
+        }
+
+        $lims_payment_data = Payment::where('sale_id', $id)->get();
+        if(cache()->has('pos_setting'))
+        {
+            $lims_pos_setting_data = cache()->get('pos_setting');
+        }
+        else{
+            $lims_pos_setting_data = PosSetting::select('invoice_option','thermal_invoice_size')->latest()->first();
+        }
+
+        $supportedIdentifiers = [
+            'al', 'fr_BE', 'pt_BR', 'bg', 'cs', 'dk', 'nl', 'et', 'ka', 'de', 'fr', 'hu', 'id', 'it', 'lt', 'lv',
+            'ms', 'fa', 'pl', 'ro', 'sk', 'es', 'ru', 'sv', 'tr', 'tk', 'ua', 'yo'
+        ]; //ar, az, ku, mk - not supported
+
+        $defaultLocale = \App::getLocale();
+        $numberToWords = new NumberToWords();
+
+        if(in_array($defaultLocale, $supportedIdentifiers))
+            $numberTransformer = $numberToWords->getNumberTransformer($defaultLocale);
+        else
+            $numberTransformer = $numberToWords->getNumberTransformer('en');
+
+
+        if(config('is_zatca')) {
+            //generating base64 TLV format qrtext for qrcode
+            $qrText = GenerateQrCode::fromArray([
+                new Seller(config('company_name')), // seller name
+                new TaxNumber(config('vat_registration_number')), // seller tax number
+                new InvoiceDate($lims_sale_data->created_at->toDateString()."T".$lims_sale_data->created_at->toTimeString()), // invoice date as Zulu ISO8601 @see https://en.wikipedia.org/wiki/ISO_8601
+                new InvoiceTotalAmount(number_format((float)$lims_sale_data->grand_total, 4, '.', '')), // invoice total amount
+                new InvoiceTaxAmount(number_format((float)($lims_sale_data->total_tax+$lims_sale_data->order_tax), 4, '.', '')) // invoice tax amount
+                // TODO :: Support others tags
+            ])->toBase64();
+        }
+        else {
+            $qrText = "https://".$mySubdomain.".tradeaidbd.com/view-my-invoice/".$lims_sale_data->id;
+        }
+        if(is_null($lims_sale_data->exchange_rate))
+        {
+            $numberInWords = $numberTransformer->toWords($lims_sale_data->grand_total);
+            $currency_code = cache()->get('currency')->code;
+        } else {
+            $numberInWords = $numberTransformer->toWords($lims_sale_data->grand_total);
+            $sale_currency = DB::table('currencies')->select('code')->where('id',$lims_sale_data->currency_id)->first();
+            $currency_code = $sale_currency->code;
+        }
+        $paying_methods = Payment::where('sale_id', $id)->pluck('paying_method')->toArray();
+        $paid_by_info = '';
+        foreach ($paying_methods as $key => $paying_method) {
+            if($key)
+                $paid_by_info .= ', '.$paying_method;
+            else
+                $paid_by_info = $paying_method;
+        }
+        $sale_custom_fields = CustomField::where([
+                                ['belongs_to', 'sale'],
+                                ['is_invoice', true]
+                            ])->pluck('name');
+        $customer_custom_fields = CustomField::where([
+                                ['belongs_to', 'customer'],
+                                ['is_invoice', true]
+                            ])->pluck('name');
+        $product_custom_fields = CustomField::where([
+                                ['belongs_to', 'product'],
+                                ['is_invoice', true]
+                            ])->pluck('name');
+        $returned_amount = DB::table('sales')
+                                    ->join('returns', 'sales.id', '=', 'returns.sale_id')
+                                    ->where([
+                                        ['sales.customer_id', $lims_customer_data->id],
+                                        ['sales.payment_status', '!=', 4]
+                                    ])
+                                    ->sum('returns.grand_total');
+        $saleData = DB::table('sales')->where([
+                        ['customer_id', $lims_customer_data->id],
+                        //['payment_status', '!=', 4],
+                        ['created_at', '<', $lims_sale_data->created_at]
+                    ])
+                    ->selectRaw('SUM(grand_total) as grand_total,SUM(paid_amount) as paid_amount')
+                    ->first();
+
+        foreach ($lims_product_sale_data as $sale_data) {
+            // IMEIs
+            if (isset($sale_data->imei_number)) {
+                $temp = array_unique(explode(',', $sale_data->imei_number));
+                $sale_data->imei_number = implode(',', $temp);
+            }
+            // Warranty/Guarantee
+            $product = Product::select(
+                'warranty',
+                'warranty_type',
+                'guarantee',
+                'guarantee_type',
+            )->where('id', $sale_data->product_id)->first();
+
+            if (isset($product->warranty)) {
+                if ($product->warranty === 1) {
+
+                }
+                $sale_data->warranty_duration = $product->warranty . ' ' . ($product->warranty === 1 ? str_replace('s', '', $product->warranty_type) : $product->warranty_type);
+                $sale_data->warranty_end = $this->getWarrantyGuaranteeEndDate([
+                    'sale_date' => $lims_sale_data->created_at,
+                    'duration' => $product->warranty,
+                    'type' => $product->warranty_type,
+                ]);
+            }
+            if (isset($product->guarantee)) {
+                $sale_data->guarantee_duration = $product->guarantee . ' ' . ($product->guarantee === 1 ? str_replace('s', '', $product->guarantee_type) : $product->guarantee_type);
+                $sale_data->guarantee_end = $this->getWarrantyGuaranteeEndDate([
+                    'sale_date' => $lims_sale_data->created_at,
+                    'duration' => $product->guarantee,
+                    'type' => $product->guarantee_type,
+                ]);
+            }
+        }
+        $totalDue = ($saleData->grand_total - $returned_amount) - $saleData->paid_amount;
+
+        // return [$lims_sale_data, $currency_code, $lims_product_sale_data, $lims_biller_data, $lims_warehouse_data, $lims_customer_data, $lims_payment_data, $numberInWords, $paid_by_info, $sale_custom_fields, $customer_custom_fields, $product_custom_fields, $qrText, $totalDue];
+
+        if($lims_pos_setting_data->invoice_option == 'A4') {
+            return view('backend.sale.a4_print_invoice', compact('lims_sale_data', 'currency_code', 'lims_product_sale_data', 'lims_biller_data', 'lims_warehouse_data', 'lims_customer_data', 'lims_payment_data', 'numberInWords', 'paid_by_info', 'sale_custom_fields', 'customer_custom_fields', 'product_custom_fields', 'qrText', 'totalDue'));
+        }
+        elseif($lims_sale_data->sale_type == 'online'){
+            return view('backend.sale.a4_print_invoice', compact('lims_sale_data', 'currency_code', 'lims_product_sale_data', 'lims_biller_data', 'lims_warehouse_data', 'lims_customer_data', 'lims_payment_data', 'numberInWords', 'paid_by_info', 'sale_custom_fields', 'customer_custom_fields', 'product_custom_fields', 'qrText', 'totalDue'));
         }
         elseif($lims_pos_setting_data->invoice_option == 'thermal' && $lims_pos_setting_data->thermal_invoice_size == '58'){
             return view('backend.sale.invoice58', compact('lims_sale_data', 'currency_code', 'lims_product_sale_data', 'lims_biller_data', 'lims_warehouse_data', 'lims_customer_data', 'lims_payment_data', 'numberInWords', 'sale_custom_fields', 'customer_custom_fields', 'product_custom_fields', 'qrText', 'totalDue'));

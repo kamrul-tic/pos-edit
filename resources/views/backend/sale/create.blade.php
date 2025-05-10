@@ -47,46 +47,7 @@
                                         </span>
                                         @endif
                                     </div>
-                                    <div class="col-md-4">
-                                        <div class="form-group">
-                                            <label>{{trans('file.customer')}} *</label>
-                                            <div class="input-group pos">
-                                                <?php
-                                                  $deposit = [];
-                                                  $points = [];
-                                                  $customer_active = DB::table('permissions')
-                                                  ->join('role_has_permissions', 'permissions.id', '=', 'role_has_permissions.permission_id')
-                                                  ->where([
-                                                    ['permissions.name', 'customers-add'],
-                                                    ['role_id', \Auth::user()->role_id] ])->first();
-                                                ?>
-                                                @if($customer_active)
-                                                <select required name="customer_id" id="customer_id" class="selectpicker form-control" data-live-search="true" title="Select customer..." style="width: 100px">
-                                                @foreach($lims_customer_list as $customer)
-                                                    @php
-                                                      $deposit[$customer->id] = $customer->deposit - $customer->expense;
-
-                                                      $points[$customer->id] = $customer->points;
-                                                    @endphp
-                                                    <option value="{{$customer->id}}">{{$customer->name . ' (' . $customer->phone_number . ')'}}</option>
-                                                @endforeach
-                                                </select>
-                                                <button type="button" class="btn btn-default btn-sm" data-toggle="modal" data-target="#addCustomer"><i class="dripicons-plus"></i></button>
-                                                @else
-                                                <select required name="customer_id" id="customer_id" class="selectpicker form-control" data-live-search="true" title="Select customer...">
-                                                @foreach($lims_customer_list as $customer)
-                                                    @php
-                                                      $deposit[$customer->id] = $customer->deposit - $customer->expense;
-
-                                                      $points[$customer->id] = $customer->points;
-                                                    @endphp
-                                                    <option value="{{$customer->id}}">{{$customer->name . ' (' . $customer->phone_number . ')'}}</option>
-                                                @endforeach
-                                                </select>
-                                                @endif
-                                            </div>
-                                        </div>
-                                    </div>
+                                    
                                     @if(isset(auth()->user()->warehouse_id))
                                     <input type="hidden" name="warehouse_id" id="warehouse_id" value="{{auth()->user()->warehouse_id}}" />
                                     @else
@@ -115,7 +76,7 @@
                                         </div>
                                     </div>
                                     @endif
-                                    <div class="col-md-2">
+                                    <div class="col-md-4">
                                         <div class="form-group">
                                             <label>{{trans('file.Currency')}} *</label>
                                             <select name="currency_id" id="currency" class="form-control selectpicker" data-toggle="tooltip" title="" data-original-title="Sale currency">
@@ -125,7 +86,7 @@
                                             </select>
                                         </div>
                                     </div>
-                                    <div class="col-md-2">
+                                    <div class="col-md-4">
                                         <div class="form-group mb-0">
                                             <label>{{trans('file.Exchange Rate')}} *</label>
                                         </div>
@@ -136,6 +97,49 @@
                                             </div>
                                         </div>
                                     </div>
+                                    
+                                    <div class="col-md-12">
+                                        <div class="form-group">
+                                            <label>{{trans('file.customer')}} *</label>
+                                            <div class="input-group pos">
+                                                <?php
+                                                  $deposit = [];
+                                                  $points = [];
+                                                  $customer_active = DB::table('permissions')
+                                                  ->join('role_has_permissions', 'permissions.id', '=', 'role_has_permissions.permission_id')
+                                                  ->where([
+                                                    ['permissions.name', 'customers-add'],
+                                                    ['role_id', \Auth::user()->role_id] ])->first();
+                                                ?>
+                                                @if($customer_active)
+                                                <select required name="customer_id" id="customer_id" class="selectpicker form-control" data-live-search="true" title="Select customer..." style="width: 100px">
+                                                @foreach($lims_customer_list as $customer)
+                                                    @php
+                                                      $deposit[$customer->id] = $customer->deposit - $customer->expense;
+
+                                                      $points[$customer->id] = $customer->points;
+                                                    @endphp
+                                                    <option value="{{$customer->id}}">{{$customer->name }} ( {{ $customer->phone_number }}, Address: {{ $customer->address }},{{ $customer->city }}, Due: TK {{ number_format($customer->total_due, 2) }} )</option>
+                                                @endforeach
+                                                </select>
+                                                <button type="button" class="btn btn-default btn-sm" data-toggle="modal" data-target="#addCustomer"><i class="dripicons-plus"></i></button>
+                                                @else
+                                                <select required name="customer_id" id="customer_id" class="selectpicker form-control" data-live-search="true" title="Select customer...">
+                                                @foreach($lims_customer_list as $customer)
+                                                    @php
+                                                      $deposit[$customer->id] = $customer->deposit - $customer->expense;
+
+                                                      $points[$customer->id] = $customer->points;
+                                                    @endphp
+                                                    <option value="{{$customer->id}}">{{$customer->name . ' (' . $customer->phone_number . ')'}}</option>
+                                                @endforeach
+                                                </select>
+                                                @endif
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    
                                 </div>
                                 <div class="row mt-3">
                                     <div class="col-md-12">
@@ -380,7 +384,7 @@
                                                 <input type="number" name="paying_amount[]" class="form-control" id="paying-amount" step="any" />
                                             </div>
                                         </div>
-                                        <div class="col-md-4">
+                                        <div class="col-md-4 d-none">
                                             <div class="form-group">
                                                 <label>{{trans('file.Paying Amount')}} *</label>
                                                 <input type="number" name="paid_amount[]" class="form-control" id="paid-amount" step="any"/>
@@ -392,7 +396,7 @@
                                                 <input type="text" name="payment_receiver" class="form-control" id="payment-receiver"/>
                                             </div>
                                         </div>
-                                        <div class="col-md-4">
+                                        <div class="col-md-4 d-none">
                                             <div class="form-group">
                                                 <label>{{trans('file.Change')}}</label>
                                                 <p id="change" class="ml-2">{{number_format(0, $general_setting->decimal, '.', '')}}</p>
@@ -1457,14 +1461,15 @@ $('select[name="payment_status"]').on("change", function() {
         if(payment_status == 4){
             $("#paid-amount").prop('disabled',true);
             $('input[name="paying_amount[]"]').val($('input[name="grand_total"]').val());
-            $('input[name="paid_amount[]"]').val($('input[name="grand_total"]').val());
+        // me
+            // $('input[name="paid_amount[]"]').val($('input[name="grand_total"]').val());
         }
     }
     else{
         $("#paying-amount").prop('required',false);
         $("#paid-amount").prop('required',false);
         $('input[name="paying_amount[]"]').val('');
-        $('input[name="paid_amount[]"]').val('');
+       // $('input[name="paid_amount[]"]').val('');
         $("#payment").hide();
     }
 });
@@ -1551,8 +1556,8 @@ $('input[name="paid_amount[]"]').on("input", function() {
         alert('Paying amount cannot be bigger than grand total');
         $(this).val('');
     }
-
-    $("#change").text( parseFloat($("#paying-amount").val() - $(this).val()).toFixed({{$general_setting->decimal}}) );
+// me
+    // $("#change").text( parseFloat($("#paying-amount").val() - $(this).val()).toFixed({{$general_setting->decimal}}) );
     var id = $('select[name="paid_by_id[]"]').val();
     if(id == 2){
         var balance = gift_card_amount[$("#gift_card_id").val()] - gift_card_expense[$("#gift_card_id").val()];
@@ -1565,9 +1570,10 @@ $('input[name="paid_amount[]"]').on("input", function() {
     }
 });
 
-$('input[name="paying_amount[]"]').on("input", function() {
-    $("#change").text( parseFloat( $(this).val() - $("#paid-amount").val()).toFixed({{$general_setting->decimal}}));
-});
+// me
+// $('input[name="paying_amount[]"]').on("input", function() {
+//     $("#change").text( parseFloat( $(this).val() - $("#paid-amount").val()).toFixed({{$general_setting->decimal}}));
+// });
 
 $(window).keydown(function(e){
     if (e.which == 13) {
@@ -1608,10 +1614,14 @@ $(document).on('submit', '.payment-form', function(e) {
         alert('Product quantity is 0');
         e.preventDefault();
     }
-    else if( parseFloat($("#paying-amount").val()) < parseFloat($("#paid-amount").val()) ){
-        alert('Paying amount cannot be bigger than recieved amount');
-        e.preventDefault();
-    }
+    
+// me
+    // else if( parseFloat($("#paying-amount").val()) < parseFloat($("#paid-amount").val()) ){
+    //     alert('Paying amount cannot be bigger than recieved amount');
+    //     e.preventDefault();
+    // }
+    
+    
     else if( $('select[name="payment_status"]').val() == 3 && parseFloat($("#paid-amount").val()) == parseFloat($('input[name="grand_total"]').val()) ) {
         alert('Paying amount equals to grand total! Please change payment status.');
         e.preventDefault();
@@ -1639,7 +1649,7 @@ $(document).on('submit', '.payment-form', function(e) {
                 }else if(response.payment_method === 'moneipoint'){
                     // console.log('ok');
                 }else if ($('select[name="sale_status"]').val() == 1 && response !== 'pesapal') {
-                    let link = "{{url('sales/gen_invoice/')}}" + '/' + response;
+                    let link = "{{url('sales/print-invoice/')}}" + '/' + response;
                     $('#print-layout').load(link, function() {
                         setTimeout(function() {
                             window.print();
